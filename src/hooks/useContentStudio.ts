@@ -386,18 +386,17 @@ export function useContentStudio(userId?: string) {
 
     if (!isSupabaseConfigured) return;
 
-    const columnMap: Record<keyof Item['copy'], string> = {
-      onScreen: 'copy_on_screen',
-      caption: 'copy_caption',
-      hashtags: 'copy_hashtags',
-      cta: 'copy_cta',
-      script: 'copy_script',
-    };
+    const patch: Database['public']['Tables']['items']['Update'] = {};
+    if (key === 'onScreen') patch.copy_on_screen = value;
+    else if (key === 'caption') patch.copy_caption = value;
+    else if (key === 'hashtags') patch.copy_hashtags = value;
+    else if (key === 'cta') patch.copy_cta = value;
+    else if (key === 'script') patch.copy_script = value;
 
     try {
       await supabase
         .from('items')
-        .update({ [columnMap[key]]: value })
+        .update(patch)
         .eq('id', id);
     } catch (err) {
       console.error('Error updating copy in Supabase:', err);

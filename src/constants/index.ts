@@ -115,7 +115,7 @@ export const savedReferences: ReferenceItem[] = [
   },
 ];
 
-export const slug = (x: string) => x.toLowerCase().replaceAll(' ', '-').replaceAll('/', '-');
+export const slug = (x: string) => x.toLowerCase().replace(/ /g, '-').replace(/\//g, '-');
 
 export const missing = (i: Item) => !i.assignee || !i.copy.onScreen || !i.references.length;
 
