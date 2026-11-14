@@ -1,0 +1,10 @@
+{
+  "description": "Plan, brief, produce, and approve social content with a shared calendar, creative workflow, reference library, and lead tracker for design and editing teams.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
