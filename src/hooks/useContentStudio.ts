@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import { uploadAssetFile, deleteAssetFile, getSignedAssetUrl, formatFileSize } from '@/lib/storage';
 import type { Database } from '@/lib/database.types';
 
 export type Screen = 'calendar' | 'board' | 'references' | 'templates' | 'planner' | 'leads';
@@ -59,6 +60,9 @@ export type Item = {
     name: string;
     version: string;
     storage_path?: string | null;
+    file_size?: number | null;
+    mime_type?: string | null;
+    uploaded_at?: string;
   }[];
   checklist: {
     id?: string;
@@ -199,6 +203,9 @@ export function useContentStudio(userId?: string) {
           name: a.file_name,
           version: a.version_label,
           storage_path: a.storage_path,
+          file_size: a.file_size,
+          mime_type: a.mime_type,
+          uploaded_at: a.uploaded_at,
         })),
         checklist: (row.item_checklist || [])
           .sort((a: any, b: any) => a.sort_order - b.sort_order)
@@ -570,6 +577,47 @@ export function useContentStudio(userId?: string) {
     }
   };
 
+  const uploadAsset = async (itemId: string, file: File, versionLabel: string) => {
+    try {
+      const result = await uploadAssetFile(itemId, file, versionLabel, userId);
+      const newAsset = {
+        id: result.id,
+        name: result.name,
+        version: result.version,
+        storage_path: result.storage_path,
+        file_size: result.file_size,
+        mime_type: result.mime_type,
+        uploaded_at: result.uploaded_at,
+      };
+
+      setItems((curr) =>
+        curr.map((i) => (i.id === itemId ? { ...i, assets: [...i.assets, newAsset] } : i))
+      );
+      return newAsset;
+    } catch (err) {
+      console.error('Upload failed:', err);
+      throw err;
+    }
+  };
+
+  const removeAsset = async (itemId: string, assetId: string, storagePath?: string | null) => {
+    try {
+      if (assetId) {
+        await deleteAssetFile(assetId, storagePath);
+      }
+      setItems((curr) =>
+        curr.map((i) =>
+          i.id === itemId
+            ? { ...i, assets: i.assets.filter((a) => a.id !== assetId) }
+            : i
+        )
+      );
+    } catch (err) {
+      console.error('Delete asset failed:', err);
+      throw err;
+    }
+  };
+
   return {
     items,
     setItems,
@@ -583,6 +631,8 @@ export function useContentStudio(userId?: string) {
     addComment,
     updateLead,
     addLead,
+    uploadAsset,
+    removeAsset,
     refreshItems: fetchItems,
     refreshLeads: fetchLeads,
   };

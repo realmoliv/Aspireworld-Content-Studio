@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useContentStudio } from "@/hooks/useContentStudio";
 import { AuthView } from "@/components/AuthView";
+import { AssetUploadManager } from "@/components/AssetUploadManager";
 
 type Screen = "calendar" | "board" | "references" | "templates" | "planner" | "leads";
 type Status =
@@ -409,7 +410,7 @@ function Empty({ title, text, action, onClick }: any) {
 }
 
 function App() {
-  const { user, profile, signOut, isSupabaseConfigured } = useAuth();
+  const { user, profile, signOut, isSupabaseConfigured, canWrite, isAdmin } = useAuth();
   const [demoMode, setDemoMode] = useState(!isSupabaseConfigured);
   const studio = useContentStudio(user?.id);
 
@@ -707,6 +708,41 @@ function App() {
           onDuplicateNext={() => duplicate(selected, true)}
           setToast={setToast}
           currentUserName={profile?.full_name || (user?.email ? user.email.split('@')[0] : "Aryan Kapoor")}
+          canWrite={canWrite}
+          isAdmin={isAdmin}
+          onUploadAsset={async (file: File, version: string) => {
+            if (isConnected) {
+              const res = await studio.uploadAsset(selected.id, file, version);
+              setToast(`Uploaded ${res.name} (${version.toUpperCase()})`);
+              return res;
+            } else {
+              const mockAsset = {
+                id: `a${Date.now()}`,
+                name: file.name,
+                version,
+                storage_path: null,
+                file_size: file.size,
+                mime_type: file.type,
+                uploaded_at: new Date().toISOString(),
+              };
+              updateItem(selected.id, {
+                assets: [...selected.assets, mockAsset],
+              });
+              setToast(`Attached ${file.name} (${version.toUpperCase()})`);
+              return mockAsset;
+            }
+          }}
+          onDeleteAsset={async (assetId: string, storagePath?: string | null) => {
+            if (isConnected) {
+              await studio.removeAsset(selected.id, assetId, storagePath);
+              setToast("Asset deleted.");
+            } else {
+              updateItem(selected.id, {
+                assets: selected.assets.filter((a) => a.id !== assetId),
+              });
+              setToast("Asset removed.");
+            }
+          }}
           onAddComment={(text: string) => {
             const author = profile?.full_name || (user?.email ? user.email.split('@')[0] : "Aryan Kapoor");
             if (isConnected) {
@@ -1278,6 +1314,10 @@ function DetailDrawer({
   onDuplicateNext,
   setToast,
   currentUserName,
+  canWrite,
+  isAdmin,
+  onUploadAsset,
+  onDeleteAsset,
   onAddComment,
 }: any) {
   const [tab, setTab] = useState("brief");
@@ -1531,35 +1571,14 @@ function DetailDrawer({
             </div>
           )}
           {tab === "assets" && (
-            <div>
-              <div className="upload">
-                <span>UPLOAD DRAFT OR FINAL</span>
-                <strong>DROP FILES HERE</strong>
-                <p>Label each version clearly: v1, v2 or final.</p>
-                <Input
-                  type="file"
-                  onChange={(e: any) => {
-                    const f = e.target.files?.[0];
-                    if (f)
-                      onUpdate({
-                        assets: [
-                          ...item.assets,
-                          { name: f.name, version: `v${item.assets.length + 1}` },
-                        ],
-                      });
-                  }}
-                />
-              </div>
-              <div className="asset-list">
-                {item.assets.map((a: any) => (
-                  <div>
-                    <span>{a.version.toUpperCase()}</span>
-                    <strong>{a.name}</strong>
-                    <small>Added this session</small>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <AssetUploadManager
+              itemId={item.id}
+              assets={item.assets || []}
+              onUpload={onUploadAsset}
+              onDelete={onDeleteAsset}
+              canWrite={canWrite}
+              isAdmin={isAdmin}
+            />
           )}
           {tab === "review" && (
             <>
