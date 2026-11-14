@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useContentStudio } from '@/hooks/useContentStudio';
 import { AuthView } from '@/components/AuthView';
@@ -16,7 +16,10 @@ import type { Item, Lead, Pillar, ContentType, FilterState, ReferenceItem } from
 
 function ContentStudioApp() {
   const navigate = useNavigate();
-  const params = useParams<{ id?: string }>();
+  const location = useLocation();
+  const routeMatch = location.pathname.match(/^\/items\/([^/]+)/);
+  const routeItemId = routeMatch ? decodeURIComponent(routeMatch[1]) : null;
+
   const { user, profile, signOut, isSupabaseConfigured, canWrite, isAdmin } = useAuth();
   const [demoMode, setDemoMode] = useState(!isSupabaseConfigured);
   const studio = useContentStudio(user?.id);
@@ -29,7 +32,7 @@ function ContentStudioApp() {
     }
   });
   const [localLeads, setLocalLeads] = useState<Lead[]>(initialLeads);
-  const [selectedId, setSelectedId] = useState<string | null>(params.id || null);
+  const [selectedId, setSelectedId] = useState<string | null>(routeItemId);
   const [month, setMonth] = useState('2026-11');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filters, setFilters] = useState<FilterState>({
@@ -57,10 +60,10 @@ function ContentStudioApp() {
 
   // Sync selectedId with route parameter if present
   useEffect(() => {
-    if (params.id) {
-      setSelectedId(params.id);
+    if (routeItemId) {
+      setSelectedId(routeItemId);
     }
-  }, [params.id]);
+  }, [routeItemId]);
 
   useEffect(() => {
     if (!isConnected) {
@@ -188,12 +191,23 @@ function ContentStudioApp() {
 
   const handleCloseDrawer = () => {
     setSelectedId(null);
-    if (params.id) {
+    if (location.pathname.startsWith('/items/')) {
       navigate('/calendar');
     }
   };
 
-  const selected = items.find((i) => i.id === selectedId) || null;
+  const activeId = routeItemId || selectedId;
+  const selected = items.find((i) => i.id === activeId) || null;
+
+  // Auto-align calendar month when an item is deep-linked
+  useEffect(() => {
+    if (selected && selected.date) {
+      const itemMonth = selected.date.slice(0, 7);
+      if (itemMonth && itemMonth !== month) {
+        setMonth(itemMonth);
+      }
+    }
+  }, [selected, month]);
 
   return (
     <AppLayout
