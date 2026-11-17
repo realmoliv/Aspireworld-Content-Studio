@@ -12,7 +12,7 @@
 
 DO $$
 DECLARE
-  uid UUID := 'REPLACE_WITH_YOUR_USER_ID';
+  uid UUID := (SELECT id FROM public.profiles LIMIT 1);
 
   -- Item IDs (generated once so child rows can reference them)
   item01 UUID := gen_random_uuid();
