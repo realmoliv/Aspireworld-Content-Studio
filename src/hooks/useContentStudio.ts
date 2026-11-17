@@ -133,6 +133,8 @@ export function useContentStudio(userId?: string) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dbTablesMissing, setDbTablesMissing] = useState(false);
+  const [isLoaded, setIsLoaded] = useState(false);
 
   // Fetch all items with relations from Supabase
   const fetchItems = useCallback(async () => {
@@ -158,7 +160,12 @@ export function useContentStudio(userId?: string) {
         `)
         .order('post_date', { ascending: true });
 
-      if (itemsErr) throw itemsErr;
+      if (itemsErr) {
+        if (itemsErr.code === 'PGRST205' || itemsErr.message?.includes('schema cache')) {
+          setDbTablesMissing(true);
+        }
+        throw itemsErr;
+      }
 
       const mapped: Item[] = (rawItems || []).map((row: any) => ({
         id: row.id,
@@ -241,7 +248,12 @@ export function useContentStudio(userId?: string) {
         .select('*')
         .order('lead_date', { ascending: false });
 
-      if (err) throw err;
+      if (err) {
+        if (err.code === 'PGRST205' || err.message?.includes('schema cache')) {
+          setDbTablesMissing(true);
+        }
+        throw err;
+      }
 
       setLeads(
         (data || []).map((l: any) => ({
@@ -266,8 +278,13 @@ export function useContentStudio(userId?: string) {
     async function loadAll() {
       setLoading(true);
       if (isSupabaseConfigured) {
-        await Promise.all([fetchItems(), fetchLeads()]);
+        try {
+          await Promise.all([fetchItems(), fetchLeads()]);
+        } catch {
+          // Handled
+        }
       }
+      setIsLoaded(true);
       setLoading(false);
     }
     loadAll();
@@ -548,10 +565,10 @@ export function useContentStudio(userId?: string) {
 
     setLeads((curr) => [...curr, newLead]);
 
-    if (!isSupabaseConfigured || !userId) return;
+    if (!isSupabaseConfigured || !userId) return newLead;
 
     try {
-      const { data } = await supabase
+      const { data, error: insertErr } = await supabase
         .from('leads')
         .insert({
           lead_date: newLead.date,
@@ -566,13 +583,24 @@ export function useContentStudio(userId?: string) {
         .select('id')
         .single();
 
+      if (insertErr) {
+        console.error('Error adding lead in Supabase:', insertErr);
+        if (insertErr.code === 'PGRST205' || insertErr.message?.includes('schema cache')) {
+          setDbTablesMissing(true);
+        }
+        throw insertErr;
+      }
+
       if (data) {
+        newLead.id = data.id;
         setLeads((curr) =>
           curr.map((l) => (l.id === newLead.id ? { ...l, id: data.id } : l))
         );
       }
+      return newLead;
     } catch (e) {
       console.error('Error adding lead in Supabase:', e);
+      throw e;
     }
   };
 
@@ -624,6 +652,8 @@ export function useContentStudio(userId?: string) {
     setLeads,
     loading,
     error,
+    dbTablesMissing,
+    isLoaded,
     updateItem,
     updateCopy,
     createItem,

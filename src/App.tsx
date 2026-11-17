@@ -31,7 +31,27 @@ function ContentStudioApp() {
       return initialItems;
     }
   });
-  const [localLeads, setLocalLeads] = useState<Lead[]>(initialLeads);
+  const [localLeads, setLocalLeads] = useState<Lead[]>(() => {
+    try {
+      const stored = localStorage.getItem('aspire-leads');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+      return initialLeads;
+    } catch {
+      return initialLeads;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('aspire-leads', JSON.stringify(localLeads));
+    } catch {
+      // Ignored
+    }
+  }, [localLeads]);
+
   const [selectedId, setSelectedId] = useState<string | null>(routeItemId);
   const [month, setMonth] = useState('2026-11');
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -54,9 +74,9 @@ function ContentStudioApp() {
   });
   const [search, setSearch] = useState('');
 
-  const isConnected = isSupabaseConfigured && Boolean(user);
-  const items = isConnected && studio.items.length > 0 ? studio.items : localItems;
-  const leads = isConnected && studio.leads.length > 0 ? studio.leads : localLeads;
+  const isConnected = isSupabaseConfigured && Boolean(user) && !studio.dbTablesMissing;
+  const items = isConnected && studio.isLoaded && studio.items.length > 0 ? studio.items : localItems;
+  const leads = isConnected && studio.isLoaded && !studio.dbTablesMissing ? studio.leads : localLeads;
 
   // Sync selectedId with route parameter if present
   useEffect(() => {
@@ -311,27 +331,34 @@ function ContentStudioApp() {
             <LeadsView
               leads={leads}
               setLeads={setLocalLeads}
-              onAddLead={() => {
+              onAddLead={async () => {
+                const newFallbackLead = {
+                  id: `l${Date.now()}`,
+                  date: new Date().toISOString().slice(0, 10),
+                  source: 'Organic',
+                  name: 'New lead',
+                  contact: '',
+                  service: '',
+                  budget: '',
+                  status: 'New',
+                  followUp: '',
+                };
+
                 if (isConnected) {
-                  studio.addLead();
+                  try {
+                    await studio.addLead();
+                    setToast('Lead added.');
+                  } catch (err: any) {
+                    setLocalLeads((prev) => [...prev, newFallbackLead]);
+                    setToast('Saved locally. Run database migration in Supabase to sync.');
+                  }
                 } else {
-                  setLocalLeads((prev) => [
-                    ...prev,
-                    {
-                      id: `l${Date.now()}`,
-                      date: '2026-11-20',
-                      source: 'Organic',
-                      name: 'New lead',
-                      contact: '',
-                      service: '',
-                      budget: '',
-                      status: 'New',
-                      followUp: '',
-                    },
-                  ]);
+                  setLocalLeads((prev) => [...prev, newFallbackLead]);
+                  setToast('Lead added.');
                 }
               }}
               onUpdateLead={(leadId, patch) => {
+                setLocalLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
                 if (isConnected) {
                   studio.updateLead(leadId, patch);
                 }
