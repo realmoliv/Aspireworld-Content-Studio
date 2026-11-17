@@ -14,9 +14,9 @@ interface AppLayoutProps {
 
 export function AppLayout({
   children,
-  profileName = 'Aryan Kapoor',
-  avatarInitials = 'AK',
-  roleTitle = 'ADMIN / STRATEGIST',
+  profileName = '',
+  avatarInitials = '',
+  roleTitle = '',
   onSignOut,
   onNewItem,
   toast,

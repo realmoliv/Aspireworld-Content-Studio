@@ -11,7 +11,7 @@ import { TemplatesView } from '@/views/TemplatesView';
 import { PlannerView } from '@/views/PlannerView';
 import { LeadsView } from '@/views/LeadsView';
 import { DetailDrawer } from '@/views/DetailDrawer';
-import { initialItems, initialLeads, makeItem, pillars } from '@/constants';
+import { makeItem, pillars } from '@/constants';
 import type { Item, Lead, Pillar, ContentType, FilterState, ReferenceItem } from '@/types';
 
 function ContentStudioApp() {
@@ -20,27 +20,37 @@ function ContentStudioApp() {
   const routeMatch = location.pathname.match(/^\/items\/([^/]+)/);
   const routeItemId = routeMatch ? decodeURIComponent(routeMatch[1]) : null;
 
-  const { user, profile, signOut, isSupabaseConfigured, canWrite, isAdmin } = useAuth();
+  const { user, profile, signOut, isSupabaseConfigured, canWrite, isAdmin, loading: authLoading } = useAuth();
   const [demoMode, setDemoMode] = useState(!isSupabaseConfigured);
   const studio = useContentStudio(user?.id);
 
   const [localItems, setLocalItems] = useState<Item[]>(() => {
     try {
-      return JSON.parse(sessionStorage.getItem('aspire-items') || 'null') || initialItems;
+      const stored = sessionStorage.getItem('aspire-items');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((i: any) => !i.id?.match(/^i(1[0-6]|[1-9])$/) && i.title !== 'Aspire World intro reel');
+        }
+      }
+      return [];
     } catch {
-      return initialItems;
+      return [];
     }
   });
+
   const [localLeads, setLocalLeads] = useState<Lead[]>(() => {
     try {
       const stored = localStorage.getItem('aspire-leads');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((l: any) => !['l1', 'l2', 'l3', 'l4'].includes(l.id) && l.name !== 'Aarav Mehta' && l.name !== 'Studio North' && l.name !== 'Maya Rao' && l.name !== 'Rhyme House');
+        }
       }
-      return initialLeads;
+      return [];
     } catch {
-      return initialLeads;
+      return [];
     }
   });
 
@@ -75,7 +85,7 @@ function ContentStudioApp() {
   const [search, setSearch] = useState('');
 
   const isConnected = isSupabaseConfigured && Boolean(user) && !studio.dbTablesMissing;
-  const items = isConnected && studio.isLoaded && studio.items.length > 0 ? studio.items : localItems;
+  const items = isConnected && studio.isLoaded ? studio.items : localItems;
   const leads = isConnected && studio.isLoaded && !studio.dbTablesMissing ? studio.leads : localLeads;
 
   // Sync selectedId with route parameter if present
@@ -229,20 +239,99 @@ function ContentStudioApp() {
     }
   }, [selected, month]);
 
+  if (isSupabaseConfigured && authLoading) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          backgroundColor: '#030303',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#fefeff',
+          fontFamily: '"Barlow", sans-serif',
+        }}
+      >
+        <div
+          style={{
+            width: '36px',
+            height: '36px',
+            border: '2px solid #fc0d12',
+            borderTopColor: 'transparent',
+            borderRadius: '50%',
+            animation: 'spin 0.8s linear infinite',
+            marginBottom: '1rem',
+          }}
+        />
+        <p
+          style={{
+            fontSize: '0.75rem',
+            letterSpacing: '0.15em',
+            textTransform: 'uppercase',
+            color: '#b8b8bc',
+            fontWeight: 600,
+          }}
+        >
+          Loading Content Studio...
+        </p>
+      </div>
+    );
+  }
+
+  if (isSupabaseConfigured && !user && !demoMode) {
+    return <AuthView onBypassDemo={() => setDemoMode(true)} />;
+  }
+
+  const displayName = profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Team Member');
+  const displayInitials = profile?.avatar_initials || (displayName ? displayName.slice(0, 2).toUpperCase() : 'AW');
+  const displayRole = profile?.role ? `${profile.role.toUpperCase()} / STRATEGIST` : (user ? 'AUTHENTICATED' : 'DEMO');
+
   return (
     <AppLayout
-      profileName={profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Aryan Kapoor')}
-      avatarInitials={profile?.avatar_initials || (user?.email ? user.email.slice(0, 2).toUpperCase() : 'AK')}
-      roleTitle={profile?.role ? `${profile.role.toUpperCase()} / STRATEGIST` : (isConnected ? 'AUTHENTICATED' : 'DEMO / LOCAL')}
+      profileName={displayName}
+      avatarInitials={displayInitials}
+      roleTitle={displayRole}
       onSignOut={user ? signOut : undefined}
       onNewItem={() => openNew()}
       toast={toast}
     >
-      {isSupabaseConfigured && !user && !demoMode && (
-        <AuthView onBypassDemo={() => setDemoMode(true)} />
-      )}
-
-      <Routes>
+      {isConnected && !studio.isLoaded ? (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '50vh',
+            color: '#b8b8bc',
+            fontFamily: '"Barlow", sans-serif',
+          }}
+        >
+          <div
+            style={{
+              width: '32px',
+              height: '32px',
+              border: '2px solid #fc0d12',
+              borderTopColor: 'transparent',
+              borderRadius: '50%',
+              animation: 'spin 0.8s linear infinite',
+              marginBottom: '0.75rem',
+            }}
+          />
+          <p
+            style={{
+              fontSize: '0.7rem',
+              letterSpacing: '0.15em',
+              textTransform: 'uppercase',
+              fontWeight: 600,
+            }}
+          >
+            Syncing studio data...
+          </p>
+        </div>
+      ) : (
+        <Routes>
         <Route path="/" element={<Navigate to="/calendar" replace />} />
         <Route
           path="/calendar"
@@ -368,6 +457,7 @@ function ContentStudioApp() {
         />
         <Route path="*" element={<Navigate to="/calendar" replace />} />
       </Routes>
+      )}
 
       {selected && (
         <DetailDrawer
@@ -378,7 +468,7 @@ function ContentStudioApp() {
           onDuplicate={() => duplicate(selected)}
           onDuplicateNext={() => duplicate(selected, true)}
           setToast={setToast}
-          currentUserName={profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Aryan Kapoor')}
+          currentUserName={displayName}
           canWrite={canWrite}
           isAdmin={isAdmin}
           onUploadAsset={async (file, version) => {

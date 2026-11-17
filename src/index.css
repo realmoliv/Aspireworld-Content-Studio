@@ -17,6 +17,11 @@
   --space-5: 2rem;
   --space-6: 3rem;
 }
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
 @layer base {
   * {
     scrollbar-width: thin;
