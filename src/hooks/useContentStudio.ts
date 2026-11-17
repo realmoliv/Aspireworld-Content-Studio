@@ -503,6 +503,21 @@ export function useContentStudio(userId?: string) {
     }
   };
 
+  const deleteItem = async (itemId: string) => {
+    setItems((curr) => curr.filter((i) => i.id !== itemId));
+    if (!isSupabaseConfigured || !userId) return;
+    try {
+      const { error } = await supabase.from('items').delete().eq('id', itemId);
+      if (error) {
+        console.error('Error deleting item from Supabase:', error);
+        throw error;
+      }
+    } catch (e) {
+      console.error('Error deleting item from Supabase:', e);
+      throw e;
+    }
+  };
+
   const addComment = async (itemId: string, text: string, authorName = 'Team member') => {
     const newComment = {
       id: `c${Date.now()}`,
@@ -662,6 +677,7 @@ export function useContentStudio(userId?: string) {
     addLead,
     uploadAsset,
     removeAsset,
+    deleteItem,
     refreshItems: fetchItems,
     refreshLeads: fetchLeads,
   };

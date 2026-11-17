@@ -18,6 +18,7 @@ interface DetailDrawerProps {
   onUploadAsset?: (file: File, version: string) => Promise<any>;
   onDeleteAsset?: (assetId: string, storagePath?: string | null) => Promise<void>;
   onAddComment?: (text: string) => void;
+  onDelete?: () => void;
 }
 
 export function DetailDrawer({
@@ -34,6 +35,7 @@ export function DetailDrawer({
   onUploadAsset,
   onDeleteAsset,
   onAddComment,
+  onDelete,
 }: DetailDrawerProps) {
   const [tab, setTab] = useState<'brief' | 'copy' | 'shots' | 'assets' | 'review'>('brief');
   const [comment, setComment] = useState('');
@@ -83,6 +85,18 @@ export function DetailDrawer({
           <Button onClick={copyBrief}>COPY BRIEF</Button>
           <Button onClick={onDuplicate}>DUPLICATE</Button>
           <Button onClick={onDuplicateNext}>NEXT MONTH</Button>
+          {onDelete && canWrite && (
+            <Button
+              onClick={() => {
+                if (window.confirm(`Delete "${item.title || 'Untitled item'}"?`)) {
+                  onDelete();
+                }
+              }}
+              style={{ color: '#fc0d12', borderColor: 'rgba(252, 13, 18, 0.4)', marginLeft: 'auto' }}
+            >
+              DELETE
+            </Button>
+          )}
         </div>
 
         <nav className="tabs">

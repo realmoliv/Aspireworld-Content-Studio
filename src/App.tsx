@@ -30,7 +30,7 @@ function ContentStudioApp() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          return parsed.filter((i: any) => !i.id?.match(/^i(1[0-6]|[1-9])$/) && i.title !== 'Aspire World intro reel');
+          return parsed.filter((i: any) => !i.id?.match(/^i(1[0-6]|[1-9])$/) && i.title !== 'Aspire World intro reel' && i.title !== 'Untitled item');
         }
       }
       return [];
@@ -135,6 +135,21 @@ function ContentStudioApp() {
     setLocalItems((v) => v.map((i) => (i.id === id ? { ...i, copy: { ...i.copy, [key]: value } } : i)));
     if (isConnected) {
       studio.updateCopy(id, key, value);
+    }
+  };
+
+  const deleteItem = async (id: string) => {
+    setLocalItems((v) => v.filter((i) => i.id !== id));
+    handleCloseDrawer();
+    if (isConnected) {
+      try {
+        await studio.deleteItem(id);
+        setToast('Item deleted.');
+      } catch {
+        setToast('Failed to delete item.');
+      }
+    } else {
+      setToast('Item deleted.');
     }
   };
 
@@ -467,6 +482,7 @@ function ContentStudioApp() {
           onCopy={(key, value) => updateCopy(selected.id, key, value)}
           onDuplicate={() => duplicate(selected)}
           onDuplicateNext={() => duplicate(selected, true)}
+          onDelete={() => deleteItem(selected.id)}
           setToast={setToast}
           currentUserName={displayName}
           canWrite={canWrite}
