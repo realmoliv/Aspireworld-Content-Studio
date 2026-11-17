@@ -3,23 +3,11 @@
 -- ============================================================
 
 -- ************************************************************
--- 0. HELPER FUNCTION: user_role()
--- ************************************************************
--- Returns the role of the currently authenticated user.
--- SECURITY DEFINER so RLS policies can read profiles safely.
-
-CREATE OR REPLACE FUNCTION public.user_role()
-RETURNS TEXT AS $$
-  SELECT role FROM public.profiles WHERE id = auth.uid()
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
-
-
--- ************************************************************
 -- 1. TABLES
 -- ************************************************************
 
 -- ---------- profiles ----------
-CREATE TABLE public.profiles (
+CREATE TABLE IF NOT EXISTS public.profiles (
   id              UUID        PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   full_name       TEXT        NOT NULL,
   role            TEXT        NOT NULL DEFAULT 'editor'
@@ -29,7 +17,7 @@ CREATE TABLE public.profiles (
 );
 
 -- ---------- items ----------
-CREATE TABLE public.items (
+CREATE TABLE IF NOT EXISTS public.items (
   id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   title           TEXT        NOT NULL,
   content_type    TEXT        NOT NULL
@@ -66,7 +54,7 @@ CREATE TABLE public.items (
 );
 
 -- ---------- item_references ----------
-CREATE TABLE public.item_references (
+CREATE TABLE IF NOT EXISTS public.item_references (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id     UUID NOT NULL REFERENCES public.items(id) ON DELETE CASCADE,
   label       TEXT NOT NULL,
@@ -77,7 +65,7 @@ CREATE TABLE public.item_references (
 );
 
 -- ---------- item_shots ----------
-CREATE TABLE public.item_shots (
+CREATE TABLE IF NOT EXISTS public.item_shots (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id        UUID NOT NULL REFERENCES public.items(id) ON DELETE CASCADE,
   shot_order     TEXT NOT NULL DEFAULT '01',
@@ -87,7 +75,7 @@ CREATE TABLE public.item_shots (
 );
 
 -- ---------- item_assets ----------
-CREATE TABLE public.item_assets (
+CREATE TABLE IF NOT EXISTS public.item_assets (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id       UUID        NOT NULL REFERENCES public.items(id) ON DELETE CASCADE,
   file_name     TEXT        NOT NULL,
@@ -100,7 +88,7 @@ CREATE TABLE public.item_assets (
 );
 
 -- ---------- item_checklist ----------
-CREATE TABLE public.item_checklist (
+CREATE TABLE IF NOT EXISTS public.item_checklist (
   id         UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id    UUID    NOT NULL REFERENCES public.items(id) ON DELETE CASCADE,
   label      TEXT    NOT NULL,
@@ -109,7 +97,7 @@ CREATE TABLE public.item_checklist (
 );
 
 -- ---------- item_comments ----------
-CREATE TABLE public.item_comments (
+CREATE TABLE IF NOT EXISTS public.item_comments (
   id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   item_id    UUID        NOT NULL REFERENCES public.items(id) ON DELETE CASCADE,
   author_id  UUID        NOT NULL REFERENCES public.profiles(id),
@@ -118,7 +106,7 @@ CREATE TABLE public.item_comments (
 );
 
 -- ---------- leads ----------
-CREATE TABLE public.leads (
+CREATE TABLE IF NOT EXISTS public.leads (
   id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   lead_date  DATE        NOT NULL,
   source     TEXT        NOT NULL DEFAULT 'Organic'
@@ -148,10 +136,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS trg_items_updated_at ON public.items;
 CREATE TRIGGER trg_items_updated_at
   BEFORE UPDATE ON public.items
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
+DROP TRIGGER IF EXISTS trg_leads_updated_at ON public.leads;
 CREATE TRIGGER trg_leads_updated_at
   BEFORE UPDATE ON public.leads
   FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
@@ -185,19 +175,40 @@ BEGIN
   ));
 
   INSERT INTO public.profiles (id, full_name, avatar_initials)
-  VALUES (NEW.id, _full_name, _initials);
+  VALUES (NEW.id, _full_name, _initials)
+  ON CONFLICT (id) DO UPDATE
+  SET full_name = EXCLUDED.full_name,
+      avatar_initials = EXCLUDED.avatar_initials;
 
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 
 -- ************************************************************
--- 4. ENABLE ROW LEVEL SECURITY
+-- 4. HELPER FUNCTION: user_role()
+-- ************************************************************
+-- Returns the role of the currently authenticated user.
+-- SECURITY DEFINER so RLS policies can read profiles safely.
+
+CREATE OR REPLACE FUNCTION public.user_role()
+RETURNS TEXT AS $$
+DECLARE
+  _role TEXT;
+BEGIN
+  SELECT role INTO _role FROM public.profiles WHERE id = auth.uid();
+  RETURN COALESCE(_role, 'editor');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
+
+
+-- ************************************************************
+-- 5. ENABLE ROW LEVEL SECURITY
 -- ************************************************************
 
 ALTER TABLE public.profiles        ENABLE ROW LEVEL SECURITY;
@@ -418,3 +429,18 @@ CREATE POLICY "leads: delete for admin"
   ON public.leads FOR DELETE
   TO authenticated
   USING (public.user_role() = 'admin');
+
+
+-- ************************************************************
+-- 7. BACKFILL EXISTING AUTH USERS
+-- ************************************************************
+-- Ensures any users created before this migration ran get profiles and admin role
+INSERT INTO public.profiles (id, full_name, avatar_initials, role)
+SELECT 
+  id, 
+  COALESCE(raw_user_meta_data->>'full_name', email), 
+  UPPER(LEFT(COALESCE(raw_user_meta_data->>'full_name', email), 2)),
+  'admin'
+FROM auth.users
+ON CONFLICT (id) DO NOTHING;
+
