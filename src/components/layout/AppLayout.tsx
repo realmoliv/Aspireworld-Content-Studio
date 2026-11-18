@@ -1,6 +1,8 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui';
+import { ThemeToggle } from '@/components/ThemeToggle';
+import type { Theme } from '@/hooks/useTheme';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -10,6 +12,8 @@ interface AppLayoutProps {
   onSignOut?: () => void;
   onNewItem?: () => void;
   toast?: string;
+  theme?: Theme;
+  onToggleTheme?: () => void;
 }
 
 export function AppLayout({
@@ -20,6 +24,8 @@ export function AppLayout({
   onSignOut,
   onNewItem,
   toast,
+  theme,
+  onToggleTheme,
 }: AppLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -108,6 +114,9 @@ export function AppLayout({
             <strong>Aspire World / Social</strong>
           </div>
           <div className="top-actions">
+            {onToggleTheme && theme && (
+              <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+            )}
             <button className="search-button" aria-label="Search">
               SEARCH
             </button>

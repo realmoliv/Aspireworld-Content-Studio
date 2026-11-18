@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useContentStudio } from '@/hooks/useContentStudio';
+import { useTheme } from '@/hooks/useTheme';
 import { AuthView } from '@/components/AuthView';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { CalendarView } from '@/views/CalendarView';
@@ -21,6 +22,7 @@ function ContentStudioApp() {
   const routeItemId = routeMatch ? decodeURIComponent(routeMatch[1]) : null;
 
   const { user, profile, signOut, isSupabaseConfigured, canWrite, isAdmin, loading: authLoading } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [demoMode, setDemoMode] = useState(!isSupabaseConfigured);
   const studio = useContentStudio(user?.id);
 
@@ -259,12 +261,12 @@ function ContentStudioApp() {
       <div
         style={{
           minHeight: '100vh',
-          backgroundColor: '#030303',
+          backgroundColor: 'var(--black)',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#fefeff',
+          color: 'var(--white)',
           fontFamily: '"Barlow", sans-serif',
         }}
       >
@@ -272,7 +274,7 @@ function ContentStudioApp() {
           style={{
             width: '36px',
             height: '36px',
-            border: '2px solid #fc0d12',
+            border: '2px solid var(--red)',
             borderTopColor: 'transparent',
             borderRadius: '50%',
             animation: 'spin 0.8s linear infinite',
@@ -284,7 +286,7 @@ function ContentStudioApp() {
             fontSize: '0.75rem',
             letterSpacing: '0.15em',
             textTransform: 'uppercase',
-            color: '#b8b8bc',
+            color: 'var(--grey)',
             fontWeight: 600,
           }}
         >
@@ -310,6 +312,8 @@ function ContentStudioApp() {
       onSignOut={user ? signOut : undefined}
       onNewItem={() => openNew()}
       toast={toast}
+      theme={theme}
+      onToggleTheme={toggleTheme}
     >
       {isConnected && !studio.isLoaded ? (
         <div
@@ -319,7 +323,7 @@ function ContentStudioApp() {
             alignItems: 'center',
             justifyContent: 'center',
             minHeight: '50vh',
-            color: '#b8b8bc',
+            color: 'var(--grey)',
             fontFamily: '"Barlow", sans-serif',
           }}
         >
@@ -327,7 +331,7 @@ function ContentStudioApp() {
             style={{
               width: '32px',
               height: '32px',
-              border: '2px solid #fc0d12',
+              border: '2px solid var(--red)',
               borderTopColor: 'transparent',
               borderRadius: '50%',
               animation: 'spin 0.8s linear infinite',

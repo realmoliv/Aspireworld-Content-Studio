@@ -16,6 +16,76 @@
   --space-4: 1.5rem;
   --space-5: 2rem;
   --space-6: 3rem;
+  --topbar-bg: rgba(3, 3, 3, 0.94);
+  --backdrop-bg: rgba(3, 3, 3, 0.72);
+}
+
+[data-theme="light"] {
+  --black: #f6f6f8;
+  --white: #0a0a0c;
+  --grey: #52525b;
+  --dark-grey: #d4d4d8;
+  --red: #fc0d12;
+  --line: rgba(0, 0, 0, 0.12);
+  --surface: #ffffff;
+  --surface-2: #eeeeef;
+  --topbar-bg: rgba(246, 246, 248, 0.95);
+  --backdrop-bg: rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="light"] img[src*="aspire-globe"] {
+  filter: invert(1);
+}
+
+[data-theme="light"] .btn-primary {
+  color: #ffffff;
+}
+
+[data-theme="light"] .ref-preview {
+  background: repeating-linear-gradient(
+    135deg,
+    #eeeeef,
+    #eeeeef 8px,
+    #ffffff 8px,
+    #ffffff 9px
+  );
+}
+
+[data-theme="light"] select option {
+  background: #ffffff;
+  color: #0a0a0c;
+}
+
+.theme-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: 2.65rem;
+  padding: 0 0.85rem;
+  border: 1px solid var(--dark-grey);
+  background: var(--surface);
+  color: var(--grey);
+  font: 700 0.7rem "Barlow Condensed";
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.theme-toggle-btn:hover {
+  color: var(--white);
+  border-color: var(--white);
+  background: var(--surface-2);
+}
+
+.theme-icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  stroke: currentColor;
+}
+
+.theme-toggle-text {
+  font: inherit;
+  letter-spacing: inherit;
 }
 @keyframes spin {
   to {
@@ -178,7 +248,7 @@ main {
   padding: 0 var(--space-5);
   position: sticky;
   top: 0;
-  background: rgba(3, 3, 3, 0.94);
+  background: var(--topbar-bg);
   backdrop-filter: blur(10px);
   z-index: 15;
 }
@@ -922,7 +992,7 @@ td .input:focus {
 .drawer-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(3, 3, 3, 0.72);
+  background: var(--backdrop-bg);
   z-index: 50;
   display: flex;
   justify-content: flex-end;
@@ -1236,6 +1306,12 @@ td .input:focus {
   }
   .top-context,
   .search-button {
+    display: none;
+  }
+  .theme-toggle-btn {
+    padding: 0 0.6rem;
+  }
+  .theme-toggle-text {
     display: none;
   }
   .mobile-brand {
