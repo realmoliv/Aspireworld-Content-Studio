@@ -117,7 +117,8 @@ function ContentStudioApp() {
           (filters.type === 'All' || i.type === filters.type) &&
           (filters.pillar === 'All' || i.pillar === filters.pillar) &&
           (filters.status === 'All' || i.status === filters.status) &&
-          (filters.assignee === 'All' || i.assignee === filters.assignee)
+          (filters.assignee === 'All' ||
+            (filters.assignee === 'Unassigned' ? !i.assignee : i.assignee === filters.assignee))
       ),
     [items, month, filters]
   );
@@ -367,6 +368,7 @@ function ContentStudioApp() {
               onOpen={handleOpenItem}
               onMove={(id, date) => updateItem(id, { date })}
               onNew={() => openNew()}
+              teamMembers={studio.teamMembers}
             />
           }
         />
@@ -385,6 +387,7 @@ function ContentStudioApp() {
               onOpen={handleOpenItem}
               onMove={(id, date) => updateItem(id, { date })}
               onNew={() => openNew()}
+              teamMembers={studio.teamMembers}
             />
           }
         />
@@ -481,6 +484,7 @@ function ContentStudioApp() {
       {selected && (
         <DetailDrawer
           item={selected}
+          teamMembers={studio.teamMembers}
           onClose={handleCloseDrawer}
           onUpdate={(patch) => updateItem(selected.id, patch)}
           onCopy={(key, value) => updateCopy(selected.id, key, value)}
@@ -525,7 +529,7 @@ function ContentStudioApp() {
             }
           }}
           onAddComment={(text) => {
-            const author = profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Aryan Kapoor');
+            const author = profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Team Member');
             if (isConnected) {
               studio.addComment(selected.id, text, author);
             } else {

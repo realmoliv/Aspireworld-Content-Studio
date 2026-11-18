@@ -178,7 +178,7 @@ export function AuthView({ onBypassDemo }: AuthViewProps) {
                     type="text"
                     required
                     className="input"
-                    placeholder="e.g. Aryan Kapoor"
+                    placeholder="e.g. Full Name"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
                   />

@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Item, FilterState } from '@/types';
+import type { Item, FilterState, TeamMember } from '@/types';
 import { SectionTitle, Button, Field, Select, Empty } from '@/components/ui';
 import { types, pillars, statuses, slug, missing } from '@/constants';
 
@@ -15,6 +15,7 @@ interface CalendarViewProps {
   onOpen: (id: string) => void;
   onMove: (id: string, date: string) => void;
   onNew: () => void;
+  teamMembers?: TeamMember[];
 }
 
 export function CalendarView({
@@ -29,6 +30,7 @@ export function CalendarView({
   onOpen,
   onMove,
   onNew,
+  teamMembers = [],
 }: CalendarViewProps) {
   const [year, mon] = month.split('-').map(Number);
   const days = new Date(year, mon, 0).getDate();
@@ -82,17 +84,35 @@ export function CalendarView({
                 value={filters[k]}
                 onChange={(e) => setFilters({ ...filters, [k]: e.target.value })}
               >
-                <option>All</option>
-                {(k === 'type'
-                  ? types
+                <option value="All">All</option>
+                {k === 'type'
+                  ? types.map((x) => (
+                      <option key={x} value={x}>
+                        {x}
+                      </option>
+                    ))
                   : k === 'pillar'
-                    ? pillars
+                    ? pillars.map((x) => (
+                        <option key={x} value={x}>
+                          {x}
+                        </option>
+                      ))
                     : k === 'status'
-                      ? statuses
-                      : ['Unassigned', 'Aryan Kapoor', 'Mira Shah']
-                ).map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
+                      ? statuses.map((x) => (
+                          <option key={x} value={x}>
+                            {x}
+                          </option>
+                        ))
+                      : [
+                          <option key="Unassigned" value="Unassigned">
+                            Unassigned
+                          </option>,
+                          ...teamMembers.map((m) => (
+                            <option key={m.id} value={m.full_name}>
+                              {m.full_name}
+                            </option>
+                          )),
+                        ]}
               </Select>
             </Field>
           ))}

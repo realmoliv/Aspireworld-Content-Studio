@@ -66,6 +66,13 @@ export type CommentItem = {
   time: string;
 };
 
+export type TeamMember = {
+  id: string;
+  full_name: string;
+  role: string;
+  avatar_initials: string;
+};
+
 export type Item = {
   id: string;
   title: string;

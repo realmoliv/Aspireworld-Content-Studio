@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { uploadAssetFile, deleteAssetFile, getSignedAssetUrl, formatFileSize } from '@/lib/storage';
 import type { Database } from '@/lib/database.types';
+import type { TeamMember } from '@/types';
 
 export type Screen = 'calendar' | 'board' | 'references' | 'templates' | 'planner' | 'leads';
 export type Status =
@@ -131,10 +132,41 @@ export const defaultChecklist = [
 export function useContentStudio(userId?: string) {
   const [items, setItems] = useState<Item[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dbTablesMissing, setDbTablesMissing] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
+
+  // Fetch all registered team members from Supabase profiles
+  const fetchTeamMembers = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const { data, error: profErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, role, avatar_initials')
+        .order('full_name', { ascending: true });
+
+      if (profErr) {
+        if (profErr.code === 'PGRST205' || profErr.message?.includes('schema cache')) {
+          setDbTablesMissing(true);
+        }
+        console.error('Error fetching team members from Supabase:', profErr);
+        return;
+      }
+
+      setTeamMembers(
+        (data || []).map((p: any) => ({
+          id: p.id,
+          full_name: p.full_name,
+          role: p.role || 'editor',
+          avatar_initials: p.avatar_initials || '',
+        }))
+      );
+    } catch (e) {
+      console.error('Failed to fetch team members:', e);
+    }
+  }, []);
 
   // Fetch all items with relations from Supabase
   const fetchItems = useCallback(async () => {
@@ -279,7 +311,7 @@ export function useContentStudio(userId?: string) {
       setLoading(true);
       if (isSupabaseConfigured) {
         try {
-          await Promise.all([fetchItems(), fetchLeads()]);
+          await Promise.all([fetchItems(), fetchLeads(), fetchTeamMembers()]);
         } catch {
           // Handled
         }
@@ -288,7 +320,7 @@ export function useContentStudio(userId?: string) {
       setLoading(false);
     }
     loadAll();
-  }, [fetchItems, fetchLeads]);
+  }, [fetchItems, fetchLeads, fetchTeamMembers]);
 
   // Mutations
   const updateItem = async (id: string, patch: Partial<Item>) => {
@@ -311,6 +343,7 @@ export function useContentStudio(userId?: string) {
       if (patch.priority !== undefined) dbPatch.priority = patch.priority;
       if (patch.brief !== undefined) dbPatch.brief = patch.brief;
       if (patch.verifyDate !== undefined) dbPatch.verify_date = patch.verifyDate;
+      if ('assigneeId' in patch) dbPatch.assignee_id = patch.assigneeId || null;
 
       if (Object.keys(dbPatch).length > 0) {
         await supabase.from('items').update(dbPatch).eq('id', id);
@@ -469,6 +502,7 @@ export function useContentStudio(userId?: string) {
           copy_script: next.copy.script,
           verify_date: next.verifyDate || false,
           created_by: userId,
+          assignee_id: next.assigneeId || null,
         })
         .select()
         .single();
@@ -678,6 +712,8 @@ export function useContentStudio(userId?: string) {
     uploadAsset,
     removeAsset,
     deleteItem,
+    teamMembers,
+    refreshTeamMembers: fetchTeamMembers,
     refreshItems: fetchItems,
     refreshLeads: fetchLeads,
   };

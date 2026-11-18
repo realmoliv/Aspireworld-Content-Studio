@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import type { Item, ContentType, Pillar } from '@/types';
+import type { Item, ContentType, Pillar, TeamMember } from '@/types';
 import { Button, Field, Input, Textarea, Select, Pill } from '@/components/ui';
 import { AssetUploadManager } from '@/components/AssetUploadManager';
 import { types, pillars, statuses, specMap, slug } from '@/constants';
 
 interface DetailDrawerProps {
   item: Item;
+  teamMembers?: TeamMember[];
   onClose: () => void;
   onUpdate: (patch: Partial<Item>) => void;
   onCopy: (key: keyof Item['copy'], value: string) => void;
@@ -23,6 +24,7 @@ interface DetailDrawerProps {
 
 export function DetailDrawer({
   item,
+  teamMembers = [],
   onClose,
   onUpdate,
   onCopy,
@@ -54,7 +56,7 @@ export function DetailDrawer({
       onUpdate({
         comments: [
           ...item.comments,
-          { author: currentUserName || 'Aryan Kapoor', text: comment, time: 'Now' },
+          { author: currentUserName || 'Team Member', text: comment, time: 'Now' },
         ],
       });
     }
@@ -162,12 +164,30 @@ export function DetailDrawer({
                 </Field>
                 <Field label="ASSIGNEE" required>
                   <Select
-                    value={item.assignee}
-                    onChange={(e) => onUpdate({ assignee: e.target.value })}
+                    value={item.assigneeId || teamMembers?.find((m) => m.full_name === item.assignee)?.id || ''}
+                    onChange={(e) => {
+                      const selectedId = e.target.value;
+                      if (!selectedId) {
+                        onUpdate({ assignee: '', assigneeId: null });
+                      } else {
+                        const member = teamMembers?.find((m) => m.id === selectedId);
+                        onUpdate({
+                          assignee: member?.full_name || '',
+                          assigneeId: selectedId,
+                        });
+                      }
+                    }}
                   >
                     <option value="">Unassigned</option>
-                    <option>Aryan Kapoor</option>
-                    <option>Mira Shah</option>
+                    {teamMembers && teamMembers.length > 0 ? (
+                      teamMembers.map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.full_name}
+                        </option>
+                      ))
+                    ) : (
+                      <option value="" disabled>No users available</option>
+                    )}
                   </Select>
                 </Field>
                 <Field label="STATUS">
