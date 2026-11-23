@@ -1730,6 +1730,86 @@ td .input:focus {
   border: 0;
 }
 
+/* Pinterest Embeds */
+.ref-embed-pinterest-wrap {
+  width: 100%;
+  min-height: 550px;
+  background: var(--surface);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1rem 0;
+}
+
+.ref-embed-pinterest-iframe {
+  width: 100%;
+  max-width: 345px;
+  height: 550px;
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.ref-pinterest-board-card {
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: var(--surface);
+}
+
+.ref-pinterest-card-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.ref-pinterest-big-icon {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.ref-pinterest-card-content h4 {
+  font: 700 0.95rem "Barlow Condensed";
+  letter-spacing: 0.05em;
+  margin: 0 0 0.2rem;
+  color: var(--white);
+}
+
+.ref-pinterest-card-content p {
+  font-size: 0.8rem;
+  color: var(--grey);
+  margin: 0;
+}
+
+.ref-pinterest-card-content code {
+  background: var(--black);
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--line);
+  font-size: 0.75rem;
+}
+
+.ref-pinterest-launch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  background: #e60023;
+  color: #fff;
+  font: 700 0.75rem "Barlow Condensed";
+  letter-spacing: 0.1em;
+  text-decoration: none;
+  border: 1px solid #e60023;
+  transition: all 0.15s ease;
+  width: fit-content;
+}
+
+.ref-pinterest-launch-btn:hover {
+  background: #ad081b;
+  border-color: #ad081b;
+}
+
 /* Images & Direct Media */
 .ref-image-wrap {
   padding: 0.5rem;
@@ -1964,6 +2044,7 @@ td .input:focus {
 }
 
 .ref-embed-compact-drive,
+.ref-embed-compact-pinterest,
 .ref-embed-compact-figma,
 .ref-embed-compact-web {
   display: flex;
@@ -1976,10 +2057,15 @@ td .input:focus {
 }
 
 .ref-drive-icon,
+.ref-pinterest-icon,
 .ref-figma-icon,
 .ref-web-icon {
   font-size: 2.5rem;
   line-height: 1;
+}
+
+.ref-pinterest-icon {
+  color: #e60023;
 }
 
 .ref-compact-favicon {

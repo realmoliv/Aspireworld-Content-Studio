@@ -6,6 +6,8 @@ export type EmbedType =
   | 'loom'
   | 'drive-file'
   | 'drive-folder'
+  | 'pinterest-pin'
+  | 'pinterest-board'
   | 'instagram'
   | 'tiktok'
   | 'figma'
@@ -100,6 +102,38 @@ export function parseEmbedInfo(rawUrl: string): EmbedInfo {
       embedUrl: `https://drive.google.com/embeddedfolderview?id=${id}#grid`,
       domain: 'drive.google.com',
       rawUrl: url,
+    };
+  }
+
+  // Pinterest Pin
+  const pinterestPinMatch = url.match(
+    /(?:pinterest\.[a-z.]+|pin\.it)\/pin\/(\d+)/i
+  );
+  if (pinterestPinMatch) {
+    const id = pinterestPinMatch[1];
+    return {
+      type: 'pinterest-pin',
+      id,
+      embedUrl: `https://assets.pinterest.com/ext/embed.html?id=${id}`,
+      domain: 'pinterest.com',
+      rawUrl: url,
+    };
+  }
+
+  // Pinterest General / Board / Profile
+  if (/pinterest\.[a-z.]+|pin\.it/i.test(url)) {
+    const boardMatch = url.match(/pinterest\.[a-z.]+\/([^/]+)\/([^/?#]+)/i);
+    const isBoard =
+      boardMatch &&
+      !['pin', 'search', 'today', 'ideas', 'settings', 'notifications'].includes(
+        boardMatch[1].toLowerCase()
+      );
+    return {
+      type: isBoard ? 'pinterest-board' : 'pinterest-pin',
+      id: isBoard ? `${boardMatch[1]}/${boardMatch[2]}` : undefined,
+      domain: 'pinterest.com',
+      rawUrl: url,
+      embedUrl: url,
     };
   }
 
@@ -263,6 +297,14 @@ export function ReferenceEmbedPreview({
         <div className={`ref-embed-compact ref-embed-compact-drive ${className}`}>
           <span className="ref-drive-icon">📁</span>
           <strong>DRIVE</strong>
+        </div>
+      );
+    }
+    if (info.type === 'pinterest-pin' || info.type === 'pinterest-board') {
+      return (
+        <div className={`ref-embed-compact ref-embed-compact-pinterest ${className}`}>
+          <span className="ref-pinterest-icon">📌</span>
+          <strong>PINTEREST</strong>
         </div>
       );
     }
@@ -458,6 +500,98 @@ export function ReferenceEmbedPreview({
             </a>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // 5b. Pinterest Pin
+  if (info.type === 'pinterest-pin') {
+    return (
+      <div className={`ref-embed-container ${className}`}>
+        <div className="ref-embed-header">
+          <span className="ref-embed-pill">PINTEREST PIN</span>
+          <a
+            href={info.rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="ref-embed-link"
+          >
+            OPEN IN PINTEREST ↗
+          </a>
+        </div>
+        <div className="ref-embed-pinterest-wrap">
+          {info.id ? (
+            <iframe
+              src={`https://assets.pinterest.com/ext/embed.html?id=${info.id}`}
+              height="550"
+              width="100%"
+              title={label}
+              className="ref-embed-pinterest-iframe"
+              scrolling="no"
+            />
+          ) : (
+            <div className="ref-pinterest-board-card">
+              <div className="ref-pinterest-card-content">
+                <span className="ref-pinterest-big-icon">📌</span>
+                <div>
+                  <h4>Pinterest Pin Reference</h4>
+                  <p>{info.rawUrl}</p>
+                </div>
+              </div>
+              <a
+                href={info.rawUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="ref-pinterest-launch-btn"
+              >
+                OPEN PIN ON PINTEREST ↗
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // 5c. Pinterest Board / Profile
+  if (info.type === 'pinterest-board') {
+    return (
+      <div className={`ref-embed-container ${className}`}>
+        <div className="ref-embed-header">
+          <span className="ref-embed-pill">PINTEREST MOODBOARD</span>
+          <a
+            href={info.rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="ref-embed-link"
+          >
+            OPEN BOARD ↗
+          </a>
+        </div>
+        <div className="ref-pinterest-board-card">
+          <div className="ref-pinterest-card-content">
+            <span className="ref-pinterest-big-icon">📌</span>
+            <div>
+              <h4>Pinterest Moodboard & Visual Collection</h4>
+              {info.id && (
+                <p>
+                  Board: <code>{info.id}</code>
+                </p>
+              )}
+              <small className="muted">
+                Visual moodboard, aesthetics, and creative references.
+              </small>
+            </div>
+          </div>
+          <a
+            href={info.rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="ref-pinterest-launch-btn"
+          >
+            EXPLORE MOODBOARD ↗
+          </a>
+        </div>
       </div>
     );
   }

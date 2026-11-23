@@ -624,6 +624,7 @@ function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Pa
                         >
                           {[
                             'Inspiration',
+                            'Pinterest / Moodboard',
                             'Raw footage (Drive)',
                             'Brand asset',
                             'Competitor/Ad Library',

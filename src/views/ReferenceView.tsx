@@ -208,6 +208,7 @@ export function ReferenceView({ search, setSearch, onUse }: ReferenceViewProps) 
                 <Select value={newType} onChange={(e) => setNewType(e.target.value)}>
                   {[
                     'Inspiration',
+                    'Pinterest / Moodboard',
                     'Raw footage (Drive)',
                     'Brand asset',
                     'Competitor/Ad Library',
