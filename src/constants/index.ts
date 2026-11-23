@@ -51,7 +51,7 @@ export const specMap: Record<string, string[]> = {
   ],
   Post: ['1080 × 1350', '4:5', 'Keep key content centered'],
   Carousel: [
-    'Up to 10 slides',
+    'Up to 5 slides',
     '1080 × 1350',
     'First slide is the hook',
     'Last slide is the CTA',

@@ -1,8 +1,31 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Item, ContentType, Pillar, TeamMember } from '@/types';
 import { Button, Field, Input, Textarea, Select, Pill } from '@/components/ui';
 import { AssetUploadManager } from '@/components/AssetUploadManager';
 import { types, pillars, statuses, specMap, slug } from '@/constants';
+
+function parseCarouselSlides(onScreen: string): string[] {
+  if (!onScreen || !onScreen.trim()) return [''];
+  const markerRegex = /(?:^|\n\s*\n|\n)Slide\s*\d+\s*[:\-]\s*/i;
+  if (markerRegex.test(onScreen)) {
+    const parts = onScreen
+      .split(markerRegex)
+      .map((s) => s.trim())
+      .filter((_, idx) => idx > 0);
+    if (parts.length > 0) return parts.slice(0, 5);
+  }
+  const blocks = onScreen.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  if (blocks.length > 1) return blocks.slice(0, 5);
+  return [onScreen.trim()];
+}
+
+function serializeCarouselSlides(slides: string[]): string {
+  return slides
+    .map((s, idx) => 'Slide ' + (idx + 1) + ':\n' + s.trim())
+    .join('\n\n');
+}
+
+const SLIDE_HINTS = ['HOOK', 'CONTEXT', 'CORE VALUE', 'INSIGHT', 'CALL TO ACTION (CTA)'];
 
 interface DetailDrawerProps {
   item: Item;
@@ -41,6 +64,40 @@ export function DetailDrawer({
 }: DetailDrawerProps) {
   const [tab, setTab] = useState<'brief' | 'copy' | 'shots' | 'assets' | 'review'>('brief');
   const [comment, setComment] = useState('');
+
+  const isCarousel = item.type === 'Carousel';
+
+  const [slides, setSlides] = useState<string[]>(() => parseCarouselSlides(item.copy.onScreen));
+
+  useEffect(() => {
+    setSlides(parseCarouselSlides(item.copy.onScreen));
+  }, [item.id, item.type]);
+
+  const handleSlideChange = (index: number, val: string) => {
+    const next = [...slides];
+    next[index] = val;
+    setSlides(next);
+    onCopy('onScreen', serializeCarouselSlides(next));
+  };
+
+  const handleAddSlide = () => {
+    if (slides.length >= 5) return;
+    const next = [...slides, ''];
+    setSlides(next);
+    onCopy('onScreen', serializeCarouselSlides(next));
+  };
+
+  const handleRemoveSlide = (index: number) => {
+    if (slides.length <= 1) {
+      const next = [''];
+      setSlides(next);
+      onCopy('onScreen', '');
+      return;
+    }
+    const next = slides.filter((_, idx) => idx !== index);
+    setSlides(next);
+    onCopy('onScreen', serializeCarouselSlides(next));
+  };
 
   const copyBrief = () => {
     const text = `${item.title}\n${item.type} · ${item.pillar} · ${item.date} ${item.time}\n\nGOAL\n${item.goal}\n\nBRIEF\n${item.brief}\n\nON-SCREEN TEXT\n${item.copy.onScreen}\n\nCAPTION\n${item.copy.caption}\n\nCTA\n${item.copy.cta}\n\nSPECS\n${item.specs.join('\n')}`;
@@ -246,13 +303,62 @@ export function DetailDrawer({
 
           {tab === 'copy' && (
             <div className="copy-fields">
-              <Field label="ON-SCREEN TEXT — ONE SCENE OR SLIDE PER LINE" required>
-                <Textarea
-                  rows={6}
-                  value={item.copy.onScreen}
-                  onChange={(e) => onCopy('onScreen', e.target.value)}
-                />
-              </Field>
+              {isCarousel ? (
+                <div className="carousel-slides-wrap">
+                  <div className="carousel-header-bar">
+                    <div className="carousel-header-title">
+                      <strong>CAROUSEL SLIDES ({slides.length}/5)</strong>
+                      <small>Max 5 slides allowed for carousels</small>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      onClick={handleAddSlide}
+                      disabled={slides.length >= 5}
+                    >
+                      {slides.length >= 5 ? 'MAX 5 REACHED' : '+ ADD SLIDE'}
+                    </Button>
+                  </div>
+                  <div className="carousel-slides-container">
+                    {slides.map((slideText, idx) => (
+                      <div key={idx} className="carousel-slide-card">
+                        <div className="carousel-slide-head">
+                          <span className="carousel-slide-badge">
+                            SLIDE {String(idx + 1).padStart(2, '0')}
+                            <span className="carousel-slide-tag">
+                              — {SLIDE_HINTS[idx] || `SLIDE ${idx + 1}`}
+                            </span>
+                          </span>
+                          {slides.length > 1 && (
+                            <button
+                              type="button"
+                              className="carousel-btn-remove"
+                              onClick={() => handleRemoveSlide(idx)}
+                              title="Delete slide"
+                            >
+                              ✕ REMOVE
+                            </button>
+                          )}
+                        </div>
+                        <Textarea
+                          rows={3}
+                          value={slideText}
+                          placeholder={`Enter on-screen text for slide ${idx + 1}...`}
+                          onChange={(e) => handleSlideChange(idx, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <Field label="ON-SCREEN TEXT — ONE SCENE PER LINE" required>
+                  <Textarea
+                    rows={6}
+                    value={item.copy.onScreen}
+                    onChange={(e) => onCopy('onScreen', e.target.value)}
+                  />
+                </Field>
+              )}
               <Field label="CAPTION" required>
                 <Textarea
                   rows={6}
@@ -286,10 +392,12 @@ export function DetailDrawer({
               <div className="shot-head">
                 <div>
                   <span className="eyebrow">PRODUCTION ORDER</span>
-                  <h3>SHOT / SLIDE LIST</h3>
+                  <h3>{isCarousel ? 'SLIDE LIST (MAX 5)' : 'SHOT / SLIDE LIST'}</h3>
                 </div>
                 <Button
-                  onClick={() =>
+                  disabled={isCarousel && item.shots.length >= 5}
+                  onClick={() => {
+                    if (isCarousel && item.shots.length >= 5) return;
                     onUpdate({
                       shots: [
                         ...item.shots,
@@ -299,10 +407,10 @@ export function DetailDrawer({
                           text: '',
                         },
                       ],
-                    })
-                  }
+                    });
+                  }}
                 >
-                  + ADD ROW
+                  {isCarousel && item.shots.length >= 5 ? 'MAX 5 REACHED' : '+ ADD ROW'}
                 </Button>
               </div>
               {item.shots.map((s, index) => (
