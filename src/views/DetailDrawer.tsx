@@ -3,7 +3,7 @@ import type { Item, ContentType, Pillar, TeamMember } from '@/types';
 import { Button, Field, Input, Textarea, Select, Pill } from '@/components/ui';
 import { AssetUploadManager } from '@/components/AssetUploadManager';
 import { ReferenceEmbedPreview } from '@/components/ReferenceEmbedPreview';
-import { types, pillars, statuses, specMap, slug } from '@/constants';
+import { types, pillars, statuses, specMap, slug, getChecklistForType } from '@/constants';
 
 function parseCarouselSlides(onScreen: string): string[] {
   if (!onScreen || !onScreen.trim()) return [''];
@@ -184,12 +184,28 @@ export function DetailDrawer({
                 <Field label="CONTENT TYPE" required>
                   <Select
                     value={item.type}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const newType = e.target.value as ContentType;
+                      const prevStandards = getChecklistForType(item.type);
+                      const isDefaultOrEmpty =
+                        item.checklist.length === 0 ||
+                        item.checklist.every(
+                          (c, idx) => !c.done && c.label === prevStandards[idx]
+                        );
+
                       onUpdate({
-                        type: e.target.value as ContentType,
-                        specs: specMap[e.target.value] || [],
-                      })
-                    }
+                        type: newType,
+                        specs: specMap[newType] || [],
+                        ...(isDefaultOrEmpty
+                          ? {
+                              checklist: getChecklistForType(newType).map((label) => ({
+                                label,
+                                done: false,
+                              })),
+                            }
+                          : {}),
+                      });
+                    }}
                   >
                     {types.map((x) => (
                       <option key={x}>{x}</option>
@@ -462,23 +478,63 @@ export function DetailDrawer({
 
           {tab === 'review' && (
             <>
-              <span className="eyebrow">PRE-SUBMISSION</span>
-              <h3>QUALITY CHECKLIST</h3>
-              <div className="checklist">
-                {item.checklist.map((c, index) => (
-                  <label key={c.label + index}>
-                    <input
-                      type="checkbox"
-                      checked={c.done}
-                      onChange={() => {
-                        const n = [...item.checklist];
-                        n[index] = { ...c, done: !c.done };
-                        onUpdate({ checklist: n });
+              <div className="review-checklist-section">
+                <div className="review-checklist-header">
+                  <div>
+                    <span className="eyebrow">{item.type.toUpperCase()} VERIFICATION</span>
+                    <h3>QUALITY & ALGORITHM CHECKLIST</h3>
+                  </div>
+                  <div className="review-checklist-actions">
+                    <span className="review-checklist-count">
+                      {item.checklist.filter((c) => c.done).length} / {item.checklist.length} PASSED
+                    </span>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        onUpdate({
+                          checklist: getChecklistForType(item.type).map((label) => ({
+                            label,
+                            done: false,
+                          })),
+                        });
+                        setToast(`Loaded standard ${item.type} checklist.`);
                       }}
-                    />
-                    <span>{c.label}</span>
-                  </label>
-                ))}
+                      title={`Reset to recommended criteria for ${item.type}`}
+                    >
+                      SYNC {item.type.toUpperCase()} STANDARD
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="review-progress-bar">
+                  <div
+                    className="review-progress-fill"
+                    style={{
+                      width: `${
+                        item.checklist.length
+                          ? (item.checklist.filter((c) => c.done).length / item.checklist.length) * 100
+                          : 0
+                      }%`,
+                    }}
+                  />
+                </div>
+
+                <div className="checklist">
+                  {item.checklist.map((c, index) => (
+                    <label key={c.label + index} className={c.done ? 'checked' : ''}>
+                      <input
+                        type="checkbox"
+                        checked={c.done}
+                        onChange={() => {
+                          const n = [...item.checklist];
+                          n[index] = { ...c, done: !c.done };
+                          onUpdate({ checklist: n });
+                        }}
+                      />
+                      <span>{c.label}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
               <div className="comments">

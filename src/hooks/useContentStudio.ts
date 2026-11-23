@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { uploadAssetFile, deleteAssetFile, getSignedAssetUrl, formatFileSize } from '@/lib/storage';
+import { getChecklistForType } from '@/constants';
 import type { Database } from '@/lib/database.types';
 import type { TeamMember } from '@/types';
 
@@ -351,9 +352,39 @@ export function useContentStudio(userId?: string) {
 
       // Handle checklist updates if present
       if (patch.checklist) {
-        for (const c of patch.checklist) {
+        const keepCheckIds = patch.checklist.map((c) => c.id).filter(Boolean) as string[];
+        if (keepCheckIds.length > 0) {
+          await supabase
+            .from('item_checklist')
+            .delete()
+            .eq('item_id', id)
+            .not('id', 'in', `(${keepCheckIds.join(',')})`);
+        } else {
+          await supabase
+            .from('item_checklist')
+            .delete()
+            .eq('item_id', id);
+        }
+
+        for (let i = 0; i < patch.checklist.length; i++) {
+          const c = patch.checklist[i];
           if (c.id) {
-            await supabase.from('item_checklist').update({ done: c.done }).eq('id', c.id);
+            await supabase
+              .from('item_checklist')
+              .update({ done: c.done, label: c.label, sort_order: i })
+              .eq('id', c.id);
+          } else {
+            const { data } = await supabase
+              .from('item_checklist')
+              .insert({
+                item_id: id,
+                label: c.label,
+                done: c.done,
+                sort_order: i,
+              })
+              .select('id')
+              .single();
+            if (data) c.id = data.id;
           }
         }
       }
@@ -501,7 +532,7 @@ export function useContentStudio(userId?: string) {
       shots: [{ order: '01', visual: '', text: '' }],
       specs: specMap[preset?.type || 'Reel'],
       assets: [],
-      checklist: defaultChecklist.map((label) => ({ label, done: false })),
+      checklist: getChecklistForType(preset?.type || 'Reel').map((label) => ({ label, done: false })),
       comments: [],
     };
 
@@ -539,8 +570,8 @@ export function useContentStudio(userId?: string) {
 
       if (createErr || !created) throw createErr;
 
-      // Seed initial checklist
-      const checksToInsert = defaultChecklist.map((label, i) => ({
+      // Seed initial checklist specific to this content type
+      const checksToInsert = getChecklistForType(created.content_type as ContentType).map((label, i) => ({
         item_id: created.id,
         label,
         done: false,

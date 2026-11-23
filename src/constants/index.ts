@@ -28,16 +28,64 @@ export const types: ContentType[] = [
   'Festival Creative',
 ];
 
-export const defaultChecklist: string[] = [
-  'Hook in first 2 seconds',
-  'Captions burned in',
-  'Text inside safe zone',
-  'Logo or end card present',
-  'CTA present',
-  'Music licensed or original',
-  'No suggestive content',
-  'Caption proofread',
-];
+export const checklistMap: Record<ContentType, string[]> = {
+  Reel: [
+    'Hook in first 2–3s (Visual movement or audio pattern interrupt)',
+    'Captions burned in (Over 70% of viewers watch Reels on mute)',
+    'Text inside 9:16 safe zone (Clear of top header, bottom caption & right icons)',
+    'Trending or licensed audio synced to edit cuts',
+    'High visual retention pacing (Cut every 2–4 seconds)',
+    'Clear CTA to Save, Share or Comment (Triggers algorithm reach)',
+    'Cover frame selected & centered for 1:1 profile grid',
+  ],
+  Carousel: [
+    'Slide 1 scroll-stopping hook & bold headline (Must demand a swipe)',
+    'Swipe prompt / visual cue on Slide 1 (Right arrow or "Swipe >")',
+    'One clear, focused value takeaway per slide (High legibility on mobile)',
+    'Visual continuity across slides (Consistent fonts, colors & slide connectors)',
+    'Key content centered in 4:5 frame (Safe from 1:1 profile feed crop)',
+    'Slide 5 (final slide) clear Save for later & Share CTA',
+    'Caption adds deeper context to slide summaries',
+  ],
+  Post: [
+    '3-second visual focal point (Immediate clarity on mobile screen)',
+    'Clean typography with strong contrast against background',
+    '4:5 aspect ratio (1080 × 1350) with 1:1 profile grid safe center',
+    'Brand identity (Logo, font hierarchy & brand colors applied)',
+    'Engaging first 2 lines of caption (Hook before "more" tap)',
+    'Conversation-starter question or prompt to drive comments',
+    'Up to 5 relevant niche hashtags in caption',
+  ],
+  Story: [
+    'Interactive engagement sticker (Poll, Question Box, Quiz, Slider, or Link)',
+    'Top & bottom safe zones (Keep top 250px and bottom 250px clear of text)',
+    'Native, casual aesthetic (Authentic, unfiltered, direct-to-audience vibe)',
+    'Scannable in under 5 seconds (Quick text or high-energy clip)',
+    'Direct action callout (e.g. "Tap link below" or "DM us KEYWORD")',
+  ],
+  'Story series': [
+    'Story 1 curiosity hook or interactive poll (Maximizes completion rate)',
+    'Sequential narrative flow across frames (Hook → Context → Value → CTA)',
+    'Numbered progression indicator on each story (e.g. 1/4, 2/4)',
+    'Consistent sticker & typography placement across all slides',
+    'Safe zone margins checked on every individual story frame',
+    'Final story clear direct response CTA (Link, DM, or Booking)',
+  ],
+  'Festival Creative': [
+    'Accurate festival / cultural greeting & date relevance',
+    'Festive theme & celebratory color palette integrated',
+    'Aspire World brand logo subtly integrated (Not overpowering the greeting)',
+    '4:5 vertical portrait feed framing with 1:1 center-safe crop',
+    'Warm, inclusive community-focused caption copy',
+    'Festive / occasion-specific trending hashtags included',
+  ],
+};
+
+export function getChecklistForType(type: ContentType): string[] {
+  return checklistMap[type] || checklistMap.Reel;
+}
+
+export const defaultChecklist: string[] = checklistMap.Reel;
 
 export const specMap: Record<string, string[]> = {
   Reel: [
@@ -171,7 +219,7 @@ export const makeItem = (
   shots: [{ order: '01', visual: '', text: '' }],
   specs: specMap[type] || [],
   assets: [],
-  checklist: defaultChecklist.map((label) => ({ label, done: false })),
+  checklist: getChecklistForType(type).map((label) => ({ label, done: false })),
   comments: [],
   verifyDate,
 });
