@@ -360,6 +360,21 @@ export function useContentStudio(userId?: string) {
 
       // Handle references updates if present
       if (patch.references) {
+        // Clean up references deleted in UI
+        const keepIds = patch.references.map((r) => r.id).filter(Boolean) as string[];
+        if (keepIds.length > 0) {
+          await supabase
+            .from('item_references')
+            .delete()
+            .eq('item_id', id)
+            .not('id', 'in', `(${keepIds.join(',')})`);
+        } else {
+          await supabase
+            .from('item_references')
+            .delete()
+            .eq('item_id', id);
+        }
+
         // Upsert references
         for (let i = 0; i < patch.references.length; i++) {
           const r = patch.references[i];
@@ -394,6 +409,21 @@ export function useContentStudio(userId?: string) {
 
       // Handle shots updates if present
       if (patch.shots) {
+        // Clean up shots deleted in UI
+        const keepShotIds = patch.shots.map((s) => s.id).filter(Boolean) as string[];
+        if (keepShotIds.length > 0) {
+          await supabase
+            .from('item_shots')
+            .delete()
+            .eq('item_id', id)
+            .not('id', 'in', `(${keepShotIds.join(',')})`);
+        } else {
+          await supabase
+            .from('item_shots')
+            .delete()
+            .eq('item_id', id);
+        }
+
         for (let i = 0; i < patch.shots.length; i++) {
           const s = patch.shots[i];
           if (s.id) {

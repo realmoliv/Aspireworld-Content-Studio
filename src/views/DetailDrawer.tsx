@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import type { Item, ContentType, Pillar, TeamMember } from '@/types';
 import { Button, Field, Input, Textarea, Select, Pill } from '@/components/ui';
 import { AssetUploadManager } from '@/components/AssetUploadManager';
+import { ReferenceEmbedPreview } from '@/components/ReferenceEmbedPreview';
 import { types, pillars, statuses, specMap, slug } from '@/constants';
 
 function parseCarouselSlides(onScreen: string): string[] {
@@ -535,68 +536,154 @@ export function DetailDrawer({
 }
 
 function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Partial<Item>) => void }) {
-  const add = () =>
+  const [collapsedIndices, setCollapsedIndices] = useState<Record<number, boolean>>({});
+
+  const toggleCollapse = (idx: number) => {
+    setCollapsedIndices((prev) => ({ ...prev, [idx]: !prev[idx] }));
+  };
+
+  const add = () => {
     onUpdate({
       references: [
         ...item.references,
-        { url: '', label: 'New reference', instruction: '', type: 'Inspiration' },
+        { url: '', label: '', instruction: '', type: 'Inspiration' },
       ],
     });
+  };
+
+  const remove = (index: number) => {
+    const next = item.references.filter((_, idx) => idx !== index);
+    onUpdate({ references: next });
+  };
 
   return (
     <div className="detail-section">
       <div className="shot-head">
         <div>
           <span className="eyebrow">SOURCE MATERIAL</span>
-          <h3>REFERENCES</h3>
+          <h3>REFERENCES & EMBEDDED PREVIEWS</h3>
         </div>
         <Button onClick={add}>+ ADD LINK</Button>
       </div>
+
       {item.references.length ? (
-        item.references.map((r, index) => (
-          <div className="reference-row" key={index}>
-            <Select
-              value={r.type}
-              onChange={(e) => {
-                const n = [...item.references];
-                n[index] = { ...r, type: e.target.value };
-                onUpdate({ references: n });
-              }}
-            >
-              {['Inspiration', 'Raw footage (Drive)', 'Brand asset', 'Competitor/Ad Library'].map(
-                (x) => (
-                  <option key={x}>{x}</option>
-                )
-              )}
-            </Select>
-            <Input
-              value={r.label}
-              onChange={(e) => {
-                const n = [...item.references];
-                n[index] = { ...r, label: e.target.value };
-                onUpdate({ references: n });
-              }}
-            />
-            <Input
-              value={r.url}
-              placeholder="https://"
-              onChange={(e) => {
-                const n = [...item.references];
-                n[index] = { ...r, url: e.target.value };
-                onUpdate({ references: n });
-              }}
-            />
-            <Input
-              value={r.instruction}
-              placeholder="What should the editor copy?"
-              onChange={(e) => {
-                const n = [...item.references];
-                n[index] = { ...r, instruction: e.target.value };
-                onUpdate({ references: n });
-              }}
-            />
-          </div>
-        ))
+        <div className="reference-list-editor">
+          {item.references.map((r, index) => {
+            const isCollapsed = !!collapsedIndices[index];
+            return (
+              <div className="reference-card-editor" key={r.id || index}>
+                <div className="reference-card-head">
+                  <div className="reference-card-title-group">
+                    <span className="reference-card-badge">REF 0{index + 1}</span>
+                    <span className="reference-card-type-pill">{r.type}</span>
+                    <strong className="reference-card-label-display">
+                      {r.label || 'Untitled Reference'}
+                    </strong>
+                  </div>
+                  <div className="reference-card-actions">
+                    {r.url && (
+                      <a
+                        href={r.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="reference-card-link-btn"
+                        title="Open in new window"
+                      >
+                        OPEN ↗
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      className="reference-card-toggle-btn"
+                      onClick={() => toggleCollapse(index)}
+                    >
+                      {isCollapsed ? 'EXPAND' : 'COLLAPSE'}
+                    </button>
+                    <button
+                      type="button"
+                      className="reference-card-remove-btn"
+                      onClick={() => remove(index)}
+                      title="Remove reference"
+                    >
+                      ✕ REMOVE
+                    </button>
+                  </div>
+                </div>
+
+                {!isCollapsed && (
+                  <div className="reference-card-body">
+                    <div className="reference-card-fields">
+                      <Field label="REF TYPE">
+                        <Select
+                          value={r.type}
+                          onChange={(e) => {
+                            const n = [...item.references];
+                            n[index] = { ...r, type: e.target.value };
+                            onUpdate({ references: n });
+                          }}
+                        >
+                          {[
+                            'Inspiration',
+                            'Raw footage (Drive)',
+                            'Brand asset',
+                            'Competitor/Ad Library',
+                            'Social Media',
+                            'Design / UI',
+                          ].map((x) => (
+                            <option key={x}>{x}</option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field label="LABEL / TITLE">
+                        <Input
+                          value={r.label}
+                          placeholder="e.g. Trendzilla — Hook reference"
+                          onChange={(e) => {
+                            const n = [...item.references];
+                            n[index] = { ...r, label: e.target.value };
+                            onUpdate({ references: n });
+                          }}
+                        />
+                      </Field>
+                      <Field label="REFERENCE LINK (URL)" className="span-2">
+                        <Input
+                          value={r.url}
+                          placeholder="Paste YouTube, Vimeo, Drive, Instagram, Figma, Image, or Web URL..."
+                          onChange={(e) => {
+                            const n = [...item.references];
+                            n[index] = { ...r, url: e.target.value };
+                            onUpdate({ references: n });
+                          }}
+                        />
+                      </Field>
+                      <Field label="EDITOR INSTRUCTION / NOTES" className="span-2">
+                        <Input
+                          value={r.instruction}
+                          placeholder="What should the editor copy or notice from this reference?"
+                          onChange={(e) => {
+                            const n = [...item.references];
+                            n[index] = { ...r, instruction: e.target.value };
+                            onUpdate({ references: n });
+                          }}
+                        />
+                      </Field>
+                    </div>
+
+                    <div className="reference-card-preview-area">
+                      <span className="eyebrow" style={{ marginBottom: '0.4rem', display: 'block' }}>
+                        LIVE EMBED PREVIEW
+                      </span>
+                      <ReferenceEmbedPreview
+                        url={r.url}
+                        label={r.label || `Reference ${index + 1}`}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       ) : (
         <p className="muted">No references added. Add one clear source before production.</p>
       )}
