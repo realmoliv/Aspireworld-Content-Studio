@@ -165,6 +165,43 @@ export const savedReferences: ReferenceItem[] = [
 
 export const slug = (x: string) => x.toLowerCase().replace(/ /g, '-').replace(/\//g, '-');
 
+export function getUserDesignation(fullNameOrEmail?: string, role?: string, email?: string): string {
+  const combined = `${fullNameOrEmail || ''} ${email || ''}`.toLowerCase();
+  if (combined.includes('avani')) {
+    return 'DESIGNER';
+  }
+  if (combined.includes('sanchit')) {
+    return 'CINEMATOGRAPHER / EDITOR';
+  }
+  if (combined.includes('akshay') || role === 'admin') {
+    return 'ADMIN / STRATEGIST';
+  }
+  if (role === 'editor') {
+    return 'EDITOR';
+  }
+  if (role) {
+    return role.toUpperCase();
+  }
+  return 'CREATIVE / TEAM';
+}
+
+export function getUserTitleCaseDesignation(fullNameOrEmail?: string, role?: string, email?: string): string {
+  const combined = `${fullNameOrEmail || ''} ${email || ''}`.toLowerCase();
+  if (combined.includes('avani')) {
+    return 'Designer';
+  }
+  if (combined.includes('sanchit')) {
+    return 'Cinematographer / Editor';
+  }
+  if (combined.includes('akshay') || role === 'admin') {
+    return 'Admin / Strategist';
+  }
+  if (role === 'editor') {
+    return 'Editor';
+  }
+  return 'Creative';
+}
+
 export const missing = (i: Item) => !i.assignee || !i.copy.onScreen || !i.references.length;
 
 export const makeItem = (

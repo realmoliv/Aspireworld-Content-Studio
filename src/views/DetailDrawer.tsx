@@ -3,7 +3,7 @@ import type { Item, ContentType, Pillar, TeamMember } from '@/types';
 import { Button, Field, Input, Textarea, Select, Pill } from '@/components/ui';
 import { AssetUploadManager } from '@/components/AssetUploadManager';
 import { ReferenceEmbedPreview } from '@/components/ReferenceEmbedPreview';
-import { types, pillars, statuses, specMap, slug, getChecklistForType } from '@/constants';
+import { types, pillars, statuses, specMap, slug, getChecklistForType, getUserDesignation, getUserTitleCaseDesignation } from '@/constants';
 
 function parseCarouselSlides(onScreen: string): string[] {
   if (!onScreen || !onScreen.trim()) return [''];
@@ -256,13 +256,19 @@ export function DetailDrawer({
                     {teamMembers && teamMembers.length > 0 ? (
                       teamMembers.map((member) => (
                         <option key={member.id} value={member.id}>
-                          {member.full_name}
+                          {member.full_name} — {getUserTitleCaseDesignation(member.full_name, member.role)}
                         </option>
                       ))
                     ) : (
                       <option value="" disabled>No users available</option>
                     )}
                   </Select>
+                  {item.assignee && (
+                    <div className="assignee-role-badge">
+                      <span className="eyebrow">ROLE:</span>
+                      <strong>{getUserDesignation(item.assignee)}</strong>
+                    </div>
+                  )}
                 </Field>
                 <Field label="STATUS">
                   <Select
@@ -548,7 +554,10 @@ export function DetailDrawer({
                         .join('')}
                     </span>
                     <p>
-                      <strong>{c.author}</strong>
+                      <strong style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                        {c.author}
+                        <span className="comment-role-tag">{getUserDesignation(c.author)}</span>
+                      </strong>
                       <small>{c.time}</small>
                       {c.text}
                     </p>

@@ -12,7 +12,7 @@ import { TemplatesView } from '@/views/TemplatesView';
 import { PlannerView } from '@/views/PlannerView';
 import { LeadsView } from '@/views/LeadsView';
 import { DetailDrawer } from '@/views/DetailDrawer';
-import { makeItem, pillars } from '@/constants';
+import { makeItem, pillars, getUserDesignation } from '@/constants';
 import type { Item, Lead, Pillar, ContentType, FilterState, ReferenceItem } from '@/types';
 
 function ContentStudioApp() {
@@ -303,7 +303,9 @@ function ContentStudioApp() {
 
   const displayName = profile?.full_name || (user?.email ? user.email.split('@')[0] : 'Team Member');
   const displayInitials = profile?.avatar_initials || (displayName ? displayName.slice(0, 2).toUpperCase() : 'AW');
-  const displayRole = profile?.role ? `${profile.role.toUpperCase()} / STRATEGIST` : (user ? 'AUTHENTICATED' : 'DEMO');
+  const displayRole = user
+    ? getUserDesignation(displayName, profile?.role, user.email)
+    : 'DEMO';
 
   return (
     <AppLayout

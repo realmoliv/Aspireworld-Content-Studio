@@ -1348,6 +1348,32 @@ td .input:focus {
   font-size: 0.65rem;
   margin-bottom: 0.3rem;
 }
+
+.assignee-role-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  font: 700 0.7rem "Barlow Condensed";
+  letter-spacing: 0.08em;
+  color: var(--grey);
+}
+
+.assignee-role-badge strong {
+  color: var(--white);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  padding: 0.1rem 0.4rem;
+}
+
+.comment-role-tag {
+  color: var(--red);
+  font: 700 0.65rem "Barlow Condensed";
+  letter-spacing: 0.08em;
+  border: 1px solid rgba(252, 13, 18, 0.4);
+  padding: 0.05rem 0.3rem;
+  background: rgba(252, 13, 18, 0.05);
+}
 .comments .field {
   margin-top: 1rem;
 }
