@@ -2739,6 +2739,46 @@ td .input:focus {
   max-width: 36rem;
 }
 
+.hold-modal-general-error {
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  padding: 0.65rem 0.85rem;
+  font: 600 0.8rem "Barlow";
+  margin-bottom: 0.75rem;
+}
+
+.btn-resume-in-modal {
+  background: #fbbf24;
+  color: #000;
+  border: 1px solid #fbbf24;
+  font: 700 0.72rem "Barlow Condensed";
+  letter-spacing: 0.08em;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.btn-resume-in-modal:hover {
+  opacity: 0.9;
+}
+
+.resume-lead-info-box {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.resume-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
 .field-label-required span {
   font: 700 0.7rem "Barlow Condensed";
   letter-spacing: 0.12em;
@@ -3822,6 +3862,7 @@ td .input:focus {
   color: var(--white);
   margin: 0;
   line-height: 1.4;
+  white-space: pre-wrap;
 }
 
 .timeline-empty {

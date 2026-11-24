@@ -18,7 +18,7 @@ interface LeadsViewProps {
   currentUser?: string;
   setToast?: (msg: string) => void;
   onAddLead?: () => void;
-  onUpdateLead?: (leadId: string, patch: Partial<Lead>) => void;
+  onUpdateLead?: (leadId: string, patch: Partial<Lead>) => Promise<void> | void;
   onDeleteLead?: (leadId: string) => void;
 }
 
@@ -88,9 +88,14 @@ export function LeadsView({
   const [customHoldReason, setCustomHoldReason] = useState<string>('');
   const [holdResumeDate, setHoldResumeDate] = useState<string>(getOffsetDate(7));
   const [holdNotes, setHoldNotes] = useState<string>('');
-  const [holdErrors, setHoldErrors] = useState<{ reason?: string; date?: string }>({});
+  const [holdErrors, setHoldErrors] = useState<{ reason?: string; date?: string; general?: string }>({});
   const [isHoldSubmitting, setIsHoldSubmitting] = useState<boolean>(false);
   const [showUnsavedDiscardModal, setShowUnsavedDiscardModal] = useState<boolean>(false);
+
+  // Resume Lead Modal State (Safe resumption from Hold to active status)
+  const [resumeModalLead, setResumeModalLead] = useState<Lead | null>(null);
+  const [resumeStatus, setResumeStatus] = useState<string>('Qualified');
+  const [isResumeSubmitting, setIsResumeSubmitting] = useState<boolean>(false);
 
   // Track initial hold state to detect dirty changes
   const holdInitialStateRef = useRef<{
@@ -239,9 +244,9 @@ export function LeadsView({
     }
   };
 
-  const update = (id: string, patch: Partial<Lead>) => {
+  const update = async (id: string, patch: Partial<Lead>) => {
     if (onUpdateLead) {
-      onUpdateLead(id, patch);
+      await onUpdateLead(id, patch);
     }
     setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
   };
@@ -271,7 +276,7 @@ export function LeadsView({
     setSelectedHoldReason(initialReason);
     setCustomHoldReason(initialCustom);
     setHoldResumeDate(defaultDate);
-    setHoldNotes('');
+    setHoldNotes(lead.holdNotes || '');
     setHoldErrors({});
     setIsHoldSubmitting(false);
 
@@ -279,10 +284,18 @@ export function LeadsView({
       reason: initialReason,
       customReason: initialCustom,
       date: defaultDate,
-      notes: '',
+      notes: lead.holdNotes || '',
     };
 
     setOnHoldModalLead(lead);
+  };
+
+  // Open Resume Lead Modal
+  const openResumeModal = (lead: Lead) => {
+    const candidate = lead.previousStatus && lead.previousStatus !== 'On hold' ? lead.previousStatus : 'Qualified';
+    setResumeStatus(candidate);
+    setResumeModalLead(lead);
+    setIsResumeSubmitting(false);
   };
 
   // Check unsaved changes before closing Hold Modal
@@ -305,8 +318,8 @@ export function LeadsView({
     setOnHoldModalLead(null);
   };
 
-  // Status Change Handler
-  const handleStatusChange = (lead: Lead, newStatus: string) => {
+  // Status Change Handler (Poka-Yoke transition safeguarding)
+  const handleStatusChange = async (lead: Lead, newStatus: string) => {
     if (lead.status === newStatus) return;
 
     if (newStatus === 'On hold') {
@@ -323,10 +336,26 @@ export function LeadsView({
       }
     }
 
-    const actionText = `${currentUser} → Status changed from ${lead.status} to ${newStatus}`;
+    const previousStatus = lead.status;
+    const isResuming = previousStatus === 'On hold';
+    const actionText = isResuming
+      ? `${currentUser} changed lead status from On hold to ${newStatus} (Resumed from hold).`
+      : `${currentUser} changed lead status from ${previousStatus} to ${newStatus}.`;
+
     const newLog = logActivity(lead, actionText, 'status');
-    update(lead.id, { status: newStatus, activityLog: newLog });
-    if (setToast) setToast(`Status updated to ${newStatus}`);
+
+    try {
+      await update(lead.id, {
+        status: newStatus,
+        previousStatus,
+        ...(isResuming && { holdReason: '', holdNotes: '', resumeDate: '' }),
+        activityLog: newLog,
+      });
+      if (setToast) setToast(`Status updated to ${newStatus}`);
+    } catch (err: any) {
+      console.error('Failed to change status:', err);
+      if (setToast) setToast(`Failed to update status: ${err?.message || 'Database error'}`);
+    }
   };
 
   // Validate Hold Form
@@ -349,8 +378,8 @@ export function LeadsView({
     return Object.keys(errors).length === 0;
   };
 
-  // Confirm On Hold Modal Submission
-  const confirmOnHold = () => {
+  // Confirm On Hold Modal Submission with Single Source of Truth synchronization
+  const confirmOnHold = async () => {
     if (!onHoldModalLead || isHoldSubmitting) return;
 
     if (!validateHoldForm()) {
@@ -361,26 +390,74 @@ export function LeadsView({
 
     const effectiveReason = selectedHoldReason === 'Other / Custom' ? customHoldReason.trim() : (customHoldReason.trim() || selectedHoldReason);
     const formattedDate = formatLeadDate(holdResumeDate);
-    const noteSuffix = holdNotes.trim() ? ` (Notes: ${holdNotes.trim()})` : '';
-    const actionText = `${currentUser} → On hold, resume ${formattedDate}, reason: ${effectiveReason}${noteSuffix}`;
+    const previousStatus = onHoldModalLead.status || 'New';
+    const noteSuffix = holdNotes.trim() ? `\nAdditional Notes: ${holdNotes.trim()}` : '';
+    const actionText = `${currentUser} changed lead status from ${previousStatus} to On hold.\nHold Reason: ${effectiveReason}${noteSuffix}\nResume Date: ${formattedDate}`;
 
     const newLog = logActivity(onHoldModalLead, actionText, 'status');
 
-    update(onHoldModalLead.id, {
-      status: 'On hold',
-      holdReason: effectiveReason,
-      resumeDate: holdResumeDate,
-      followUp: holdResumeDate,
-      activityLog: newLog,
-    });
+    try {
+      await update(onHoldModalLead.id, {
+        status: 'On hold',
+        previousStatus,
+        holdReason: effectiveReason,
+        holdNotes: holdNotes.trim(),
+        resumeDate: holdResumeDate,
+        followUp: holdResumeDate,
+        activityLog: newLog,
+      });
 
-    setOnHoldModalLead(null);
-    setIsHoldSubmitting(false);
-    if (setToast) setToast(`Lead "${onHoldModalLead.name}" placed on hold until ${formattedDate}.`);
+      if (setToast) {
+        setToast(`Lead "${onHoldModalLead.name}" placed on hold until ${formattedDate}.`);
+      }
+      setOnHoldModalLead(null);
+    } catch (err: any) {
+      console.error('Error placing lead on hold:', err);
+      setHoldErrors({ general: `Database update failed: ${err?.message || 'Could not save hold status.'}` });
+      if (setToast) {
+        setToast(`Failed to place lead on hold: ${err?.message || 'Database error'}`);
+      }
+    } finally {
+      setIsHoldSubmitting(false);
+    }
+  };
+
+  // Confirm Resume Lead (Restores active pipeline state)
+  const confirmResumeLead = async () => {
+    if (!resumeModalLead || isResumeSubmitting) return;
+
+    setIsResumeSubmitting(true);
+    const targetStatus = resumeStatus || resumeModalLead.previousStatus || 'Qualified';
+    const previousStatus = resumeModalLead.status || 'On hold';
+    const actionText = `${currentUser} changed lead status from ${previousStatus} to ${targetStatus} (Resumed from hold).`;
+    const newLog = logActivity(resumeModalLead, actionText, 'status');
+
+    try {
+      await update(resumeModalLead.id, {
+        status: targetStatus,
+        previousStatus,
+        holdReason: '',
+        holdNotes: '',
+        resumeDate: '',
+        activityLog: newLog,
+      });
+
+      if (setToast) {
+        setToast(`Lead "${resumeModalLead.name}" resumed to ${targetStatus}.`);
+      }
+      setResumeModalLead(null);
+    } catch (err: any) {
+      console.error('Failed to resume lead:', err);
+      if (setToast) {
+        setToast(`Failed to resume lead: ${err?.message || 'Database error'}`);
+      }
+    } finally {
+      setIsResumeSubmitting(false);
+    }
   };
 
   // Confirm Call Booked Modal
-  const confirmCallBooked = () => {
+  const confirmCallBooked = async () => {
     if (!callBookedModalLead) return;
     if (!callBookedDate) {
       setCallBookedError('Call date is required.');
@@ -392,21 +469,52 @@ export function LeadsView({
     }
 
     const formattedDate = formatLeadDate(callBookedDate);
-    const actionText = `${currentUser} → Call booked for ${formattedDate}`;
+    const previousStatus = callBookedModalLead.status;
+    const actionText = `${currentUser} changed lead status from ${previousStatus} to Call booked.\nCall Date: ${formattedDate}`;
     const newLog = logActivity(callBookedModalLead, actionText, 'status');
 
-    update(callBookedModalLead.id, {
-      status: 'Call booked',
-      followUp: callBookedDate,
-      activityLog: newLog,
-    });
+    try {
+      await update(callBookedModalLead.id, {
+        status: 'Call booked',
+        previousStatus,
+        followUp: callBookedDate,
+        activityLog: newLog,
+      });
 
-    setCallBookedModalLead(null);
-    if (setToast) setToast(`Call booked and follow-up set for ${formattedDate}.`);
+      setCallBookedModalLead(null);
+      if (setToast) setToast(`Call booked and follow-up set for ${formattedDate}.`);
+    } catch (err: any) {
+      console.error('Failed to book call:', err);
+      if (setToast) setToast(`Failed to book call: ${err?.message || 'Database error'}`);
+    }
   };
 
   // Date Change Handler
-  const handleFollowUpChange = (lead: Lead, newDate: string) => {
+  const confirmDateChange = async () => {
+    if (!dateChangeModal) return;
+    const { lead, newDate, oldDate } = dateChangeModal;
+    const effectiveReason = customDateReason.trim() || selectedDateReason;
+    const formattedOld = formatLeadDate(oldDate);
+    const formattedNew = formatLeadDate(newDate);
+
+    const actionText = `${currentUser} changed follow-up date from ${formattedOld} to ${formattedNew}.\nReason: ${effectiveReason}`;
+    const newLog = logActivity(lead, actionText, 'date_change');
+
+    try {
+      await update(lead.id, {
+        followUp: newDate,
+        ...(lead.status === 'On hold' && { resumeDate: newDate }),
+        activityLog: newLog,
+      });
+
+      setDateChangeModal(null);
+      if (setToast) setToast(`Follow-up date updated to ${formattedNew}.`);
+    } catch (err: any) {
+      if (setToast) setToast(`Failed to update date: ${err?.message || 'Database error'}`);
+    }
+  };
+
+  const handleFollowUpChange = async (lead: Lead, newDate: string) => {
     const oldDate = lead.followUp || '';
     if (newDate === oldDate) return;
 
@@ -419,24 +527,19 @@ export function LeadsView({
       setSelectedDateReason('Client rescheduled');
       setCustomDateReason('');
     } else {
-      const actionText = `${currentUser} → Follow-up scheduled for ${formatLeadDate(newDate)}`;
+      const actionText = `${currentUser} scheduled follow-up for ${formatLeadDate(newDate)}`;
       const newLog = logActivity(lead, actionText, 'date_change');
-      update(lead.id, { followUp: newDate, activityLog: newLog });
-      if (setToast) setToast(`Follow-up date updated to ${formatLeadDate(newDate)}.`);
+      try {
+        await update(lead.id, {
+          followUp: newDate,
+          ...(lead.status === 'On hold' && { resumeDate: newDate }),
+          activityLog: newLog,
+        });
+        if (setToast) setToast(`Follow-up date updated to ${formatLeadDate(newDate)}.`);
+      } catch (err: any) {
+        if (setToast) setToast(`Failed to update date: ${err?.message || 'Database error'}`);
+      }
     }
-  };
-
-  // Confirm Date Change Modal
-  const confirmDateChange = () => {
-    if (!dateChangeModal) return;
-    const { lead, oldDate, newDate } = dateChangeModal;
-    const effectiveReason = customDateReason.trim() || selectedDateReason;
-    const actionText = `${currentUser} → Follow-up changed from ${formatLeadDate(oldDate)} to ${formatLeadDate(newDate)} (${effectiveReason})`;
-
-    const newLog = logActivity(lead, actionText, 'date_change');
-    update(lead.id, { followUp: newDate, activityLog: newLog });
-    setDateChangeModal(null);
-    if (setToast) setToast(`Follow-up date updated to ${formatLeadDate(newDate)}.`);
   };
 
   // Owner Change
@@ -642,25 +745,32 @@ export function LeadsView({
                     className="queue-action-btn"
                     onClick={() => setActiveActivityLead(l)}
                   >
-                    📜 LOGS
+                    📝 LOGS
                   </button>
-                  <button
-                    type="button"
-                    className="queue-action-btn primary"
-                    onClick={() => {
-                      if (l.status === 'On hold') {
-                        openHoldModal(l);
-                      } else {
+                  {l.status === 'On hold' ? (
+                    <button
+                      type="button"
+                      className="queue-action-btn primary"
+                      style={{ background: '#fbbf24', color: '#000', borderColor: '#fbbf24' }}
+                      onClick={() => openResumeModal(l)}
+                    >
+                      ▶ RESUME LEAD
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="queue-action-btn primary"
+                      onClick={() => {
                         setDateChangeModal({
                           lead: l,
                           oldDate: l.followUp || '',
                           newDate: getOffsetDate(3),
                         });
-                      }
-                    }}
-                  >
-                    RESCHEDULE ↗
-                  </button>
+                      }}
+                    >
+                      RESCHEDULE ↗
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -1149,14 +1259,26 @@ export function LeadsView({
                     </Select>
                   </div>
 
-                  <button
-                    type="button"
-                    className="mobile-touch-btn mobile-hold-btn"
-                    onClick={() => openHoldModal(l)}
-                    title="Configure Hold"
-                  >
-                    ⏸ HOLD
-                  </button>
+                  {l.status === 'On hold' ? (
+                    <button
+                      type="button"
+                      className="mobile-touch-btn mobile-resume-btn"
+                      style={{ background: '#fbbf24', color: '#000', borderColor: '#fbbf24' }}
+                      onClick={() => openResumeModal(l)}
+                      title="Resume Lead"
+                    >
+                      ▶ RESUME
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="mobile-touch-btn mobile-hold-btn"
+                      onClick={() => openHoldModal(l)}
+                      title="Configure Hold"
+                    >
+                      ⏸ HOLD
+                    </button>
+                  )}
                 </div>
 
                 <div className="mobile-actions-row-secondary">
@@ -1257,13 +1379,32 @@ export function LeadsView({
             {/* Modal Header with Prominent Lead Name */}
             <div className="modal-head">
               <div>
-                <span className="eyebrow">STATUS CHANGE • POKA-YOKE SAFEGUARD</span>
-                <h3 id="hold-modal-title">PLACE LEAD ON HOLD</h3>
+                <span className="eyebrow">
+                  {onHoldModalLead.status === 'On hold' ? 'HOLD SETTINGS • ACTIVE ON HOLD' : 'STATUS CHANGE • POKA-YOKE SAFEGUARD'}
+                </span>
+                <h3 id="hold-modal-title">
+                  {onHoldModalLead.status === 'On hold' ? 'HOLD SETTINGS' : 'PLACE LEAD ON HOLD'}
+                </h3>
                 <div className="modal-lead-identity-pill">
                   <span className="lead-indicator-dot" />
                   <strong>LEAD: {onHoldModalLead.name}</strong>
                   {onHoldModalLead.service && <span>• {onHoldModalLead.service}</span>}
                 </div>
+                {onHoldModalLead.status === 'On hold' && (
+                  <div style={{ marginTop: '0.65rem' }}>
+                    <button
+                      type="button"
+                      className="btn-resume-in-modal"
+                      onClick={() => {
+                        const l = onHoldModalLead;
+                        setOnHoldModalLead(null);
+                        openResumeModal(l);
+                      }}
+                    >
+                      ▶ RESUME THIS LEAD NOW
+                    </button>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -1277,6 +1418,11 @@ export function LeadsView({
 
             {/* Modal Body: Internally Scrollable */}
             <div className="modal-body hold-modal-body">
+              {holdErrors.general && (
+                <div className="hold-modal-general-error">
+                  ⚠ {holdErrors.general}
+                </div>
+              )}
               {/* Field 1: Primary Reason (Required) */}
               <div className="modal-field-block">
                 <label className="field-label-required">
@@ -1420,7 +1566,112 @@ export function LeadsView({
                 onClick={confirmOnHold}
                 className="confirm-hold-btn"
               >
-                {isHoldSubmitting ? 'SAVING...' : 'CONFIRM ON HOLD & SET RESUME DATE'}
+                {isHoldSubmitting
+                  ? 'SAVING...'
+                  : onHoldModalLead.status === 'On hold'
+                  ? 'UPDATE HOLD SETTINGS'
+                  : 'CONFIRM ON HOLD & SET RESUME DATE'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          RESUME LEAD MODAL (Safe, Poka-Yoke Lead Resumption from Hold)
+          ========================================================================= */}
+      {resumeModalLead && (
+        <div className="modal-backdrop" onClick={() => setResumeModalLead(null)}>
+          <div
+            className="modal-content hold-lead-modal-dialog"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="resume-modal-title"
+          >
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">RESUME WORKFLOW • PIPELINE RESTORATION</span>
+                <h3 id="resume-modal-title">RESUME LEAD FROM HOLD</h3>
+                <div className="modal-lead-identity-pill">
+                  <span className="lead-indicator-dot" />
+                  <strong>LEAD: {resumeModalLead.name}</strong>
+                  {resumeModalLead.service && <span>• {resumeModalLead.service}</span>}
+                </div>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setResumeModalLead(null)}
+                aria-label="Close Resume Modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body hold-modal-body">
+              <div className="resume-lead-info-box">
+                <div className="resume-info-row">
+                  <span className="eyebrow">CURRENT STATUS:</span>
+                  <strong style={{ color: '#fbbf24' }}>ON HOLD</strong>
+                </div>
+                {resumeModalLead.holdReason && (
+                  <div className="resume-info-row">
+                    <span className="eyebrow">ACTIVE HOLD REASON:</span>
+                    <span>{resumeModalLead.holdReason}</span>
+                  </div>
+                )}
+                {resumeModalLead.resumeDate && (
+                  <div className="resume-info-row">
+                    <span className="eyebrow">SCHEDULED RESUME:</span>
+                    <span>{formatLeadDate(resumeModalLead.resumeDate)}</span>
+                  </div>
+                )}
+                {resumeModalLead.previousStatus && (
+                  <div className="resume-info-row">
+                    <span className="eyebrow">PREVIOUS STATUS (BEFORE HOLD):</span>
+                    <strong style={{ color: leadStatusConfig[resumeModalLead.previousStatus]?.color || '#fff' }}>
+                      {resumeModalLead.previousStatus}
+                    </strong>
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-field-block" style={{ marginTop: '1rem' }}>
+                <label className="field-label-required">
+                  <span>SELECT TARGET STATUS TO RESUME TO:</span>
+                </label>
+                <div className="chips-grid">
+                  {leadStatuses
+                    .filter((st) => st !== 'On hold')
+                    .map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        className={`chip-btn ${resumeStatus === st ? 'active' : ''}`}
+                        onClick={() => setResumeStatus(st)}
+                      >
+                        {st === (resumeModalLead.previousStatus || 'Qualified')
+                          ? `★ ${st} (Previous Status)`
+                          : st}
+                      </button>
+                    ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="modal-foot">
+              <Button type="button" onClick={() => setResumeModalLead(null)} disabled={isResumeSubmitting}>
+                CANCEL
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                disabled={isResumeSubmitting}
+                onClick={confirmResumeLead}
+                className="confirm-resume-btn"
+              >
+                {isResumeSubmitting ? 'RESUMING...' : `CONFIRM RESUME TO ${resumeStatus.toUpperCase()}`}
               </Button>
             </div>
           </div>

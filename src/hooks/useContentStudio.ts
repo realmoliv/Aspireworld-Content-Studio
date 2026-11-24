@@ -320,6 +320,9 @@ export function useContentStudio(userId?: string) {
             matchedProfile?.full_name ||
             '';
 
+          // Authoritative status: if cached metadata has an explicit transition (e.g. On hold), prefer cached
+          const resolvedStatus = cached.status || l.status || 'New';
+
           return {
             id: l.id,
             date: l.lead_date,
@@ -328,11 +331,13 @@ export function useContentStudio(userId?: string) {
             contact: l.contact || '',
             service: l.service || '',
             budget: l.budget || '',
-            status: l.status,
-            followUp: l.follow_up || '',
+            status: resolvedStatus,
+            followUp: l.follow_up || cached.followUp || '',
             owner: resolvedOwner,
             ownerId: l.owner_id || cached.ownerId || matchedProfile?.id || null,
             holdReason: l.hold_reason || cached.holdReason || '',
+            holdNotes: l.hold_notes || cached.holdNotes || '',
+            previousStatus: l.previous_status || cached.previousStatus || '',
             resumeDate: l.resume_date || cached.resumeDate || '',
             activityLog: Array.isArray(l.activity_log) && l.activity_log.length > 0
               ? l.activity_log
@@ -678,12 +683,16 @@ export function useContentStudio(userId?: string) {
   };
 
   const updateLead = async (leadId: string, patch: Partial<Lead>) => {
-    // 1. Immediately cache extended lead metadata locally
+    // 1. Immediately cache all lead metadata including status, previousStatus, and hold attributes
     saveLeadMetaCache(leadId, {
+      ...(patch.status !== undefined && { status: patch.status }),
+      ...(patch.previousStatus !== undefined && { previousStatus: patch.previousStatus }),
       ...(patch.owner !== undefined && { owner: patch.owner }),
       ...(patch.ownerId !== undefined && { ownerId: patch.ownerId }),
       ...(patch.holdReason !== undefined && { holdReason: patch.holdReason }),
+      ...(patch.holdNotes !== undefined && { holdNotes: patch.holdNotes }),
       ...(patch.resumeDate !== undefined && { resumeDate: patch.resumeDate }),
+      ...(patch.followUp !== undefined && { followUp: patch.followUp }),
       ...(patch.activityLog !== undefined && { activityLog: patch.activityLog }),
     });
 
@@ -694,6 +703,11 @@ export function useContentStudio(userId?: string) {
 
     const isUUID = (val?: string | null) =>
       Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+
+    // Local-only fallback lead: already updated in cache and state
+    if (!isUUID(leadId)) {
+      return;
+    }
 
     const dbPatch: any = {};
     if (patch.date !== undefined) dbPatch.lead_date = patch.date;
@@ -706,7 +720,9 @@ export function useContentStudio(userId?: string) {
     if (patch.followUp !== undefined) dbPatch.follow_up = patch.followUp || null;
     if (patch.owner !== undefined) dbPatch.owner_name = patch.owner;
     if (isUUID(patch.ownerId)) dbPatch.owner_id = patch.ownerId;
-    if (patch.holdReason !== undefined) dbPatch.hold_reason = patch.holdReason;
+    if (patch.holdReason !== undefined) dbPatch.hold_reason = patch.holdReason || null;
+    if (patch.holdNotes !== undefined) dbPatch.hold_notes = patch.holdNotes || null;
+    if (patch.previousStatus !== undefined) dbPatch.previous_status = patch.previousStatus || null;
     if (patch.resumeDate !== undefined) dbPatch.resume_date = patch.resumeDate || null;
     if (patch.activityLog !== undefined) dbPatch.activity_log = patch.activityLog;
 
@@ -725,13 +741,19 @@ export function useContentStudio(userId?: string) {
           if (patch.status !== undefined) basicPatch.status = patch.status;
           if (patch.followUp !== undefined) basicPatch.follow_up = patch.followUp || null;
           if (isUUID(patch.ownerId)) basicPatch.owner_id = patch.ownerId;
-          await supabase.from('leads').update(basicPatch).eq('id', leadId);
+          const retry = await supabase.from('leads').update(basicPatch).eq('id', leadId);
+          if (retry.error) {
+            console.error('Database update failed on fallback:', retry.error);
+            throw retry.error;
+          }
         } else {
           console.error('Error updating lead in Supabase:', error);
+          throw error;
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Error updating lead in Supabase:', e);
+      throw e;
     }
   };
 

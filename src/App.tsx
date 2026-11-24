@@ -54,9 +54,12 @@ function ContentStudioApp() {
               const meta = metaCache[l.id] || {};
               return {
                 ...l,
+                status: meta.status || l.status || 'New',
+                previousStatus: meta.previousStatus || l.previousStatus || '',
                 owner: l.owner || meta.owner || '',
                 ownerId: l.ownerId || meta.ownerId || null,
                 holdReason: l.holdReason || meta.holdReason || '',
+                holdNotes: l.holdNotes || meta.holdNotes || '',
                 resumeDate: l.resumeDate || meta.resumeDate || '',
                 activityLog: l.activityLog?.length ? l.activityLog : (meta.activityLog || []),
               };
@@ -507,10 +510,10 @@ function ContentStudioApp() {
                   setToast('Lead added.');
                 }
               }}
-              onUpdateLead={(leadId, patch) => {
+              onUpdateLead={async (leadId, patch) => {
                 setLocalLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
                 if (isConnected) {
-                  studio.updateLead(leadId, patch);
+                  await studio.updateLead(leadId, patch);
                 }
               }}
               onDeleteLead={(leadId) => {

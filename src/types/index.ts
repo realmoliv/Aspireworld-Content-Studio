@@ -128,6 +128,8 @@ export type Lead = {
   owner?: string;
   ownerId?: string | null;
   holdReason?: string;
+  holdNotes?: string;
+  previousStatus?: string;
   resumeDate?: string;
   activityLog?: LeadActivity[];
 };
