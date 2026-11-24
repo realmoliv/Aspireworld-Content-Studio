@@ -96,6 +96,25 @@ export type Item = {
   verifyDate?: boolean;
 };
 
+export type LeadStatus =
+  | 'New'
+  | 'Qualified'
+  | 'Call booked'
+  | 'On hold'
+  | 'Closed'
+  | 'No response'
+  | 'Cancelled'
+  | 'Lost'
+  | 'Wrong data';
+
+export type LeadActivity = {
+  id: string;
+  timestamp: string;
+  author: string;
+  action: string;
+  type?: 'status' | 'date_change' | 'note' | 'owner';
+};
+
 export type Lead = {
   id: string;
   date: string;
@@ -106,6 +125,11 @@ export type Lead = {
   budget: string;
   status: string;
   followUp: string;
+  owner?: string;
+  ownerId?: string | null;
+  holdReason?: string;
+  resumeDate?: string;
+  activityLog?: LeadActivity[];
 };
 
 export type FilterState = {

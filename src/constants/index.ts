@@ -279,3 +279,46 @@ export const initialItems: Item[] = [];
 
 export const initialLeads: Lead[] = [];
 
+export const leadStatuses = [
+  'New',
+  'Qualified',
+  'Call booked',
+  'On hold',
+  'Closed',
+  'No response',
+  'Cancelled',
+  'Lost',
+  'Wrong data',
+] as const;
+
+export const leadSources = ['Ad', 'Organic', 'Outreach', 'Referral'] as const;
+
+export const holdReasons = [
+  'Budget — Waiting on funds / budget allocation',
+  'Timing — Postponed / Q1-Q2 launch',
+  'Thinking — Evaluating proposal / comparing quotes',
+  'Decision maker unavailable / waiting on approval',
+] as const;
+
+export const dateChangeReasons = [
+  'Client rescheduled',
+  'We rescheduled',
+  'No response',
+  'Client requested more time',
+] as const;
+
+export const leadStatusConfig: Record<
+  string,
+  { label: string; color: string; bg: string; border: string }
+> = {
+  New: { label: 'NEW', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.1)', border: '#38bdf8' },
+  Qualified: { label: 'QUALIFIED', color: '#818cf8', bg: 'rgba(129, 140, 248, 0.1)', border: '#818cf8' },
+  'Call booked': { label: 'CALL BOOKED', color: '#34d399', bg: 'rgba(52, 211, 153, 0.12)', border: '#34d399' },
+  'On hold': { label: 'ON HOLD', color: '#fbbf24', bg: 'rgba(251, 191, 36, 0.12)', border: '#fbbf24' },
+  Closed: { label: 'CLOSED', color: '#22c55e', bg: 'rgba(34, 197, 94, 0.15)', border: '#22c55e' },
+  'No response': { label: 'NO RESPONSE', color: '#fb923c', bg: 'rgba(251, 146, 60, 0.12)', border: '#fb923c' },
+  Cancelled: { label: 'CANCELLED', color: '#f87171', bg: 'rgba(248, 113, 113, 0.1)', border: '#f87171' },
+  Lost: { label: 'LOST', color: '#ef4444', bg: 'rgba(239, 68, 68, 0.12)', border: '#ef4444' },
+  'Wrong data': { label: 'WRONG DATA', color: '#9ca3af', bg: 'rgba(156, 163, 175, 0.08)', border: '#4b5563' },
+};
+

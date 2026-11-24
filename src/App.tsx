@@ -444,8 +444,12 @@ function ContentStudioApp() {
             <LeadsView
               leads={leads}
               setLeads={setLocalLeads}
+              teamMembers={studio.teamMembers}
+              currentUser={profile?.full_name || user?.email?.split('@')[0] || 'Akshay Kumar'}
+              setToast={setToast}
               onAddLead={async () => {
-                const newFallbackLead = {
+                const currentUserName = profile?.full_name || 'Akshay Kumar';
+                const newFallbackLead: Lead = {
                   id: `l${Date.now()}`,
                   date: new Date().toISOString().slice(0, 10),
                   source: 'Organic',
@@ -455,6 +459,19 @@ function ContentStudioApp() {
                   budget: '',
                   status: 'New',
                   followUp: '',
+                  owner: currentUserName,
+                  ownerId: user?.id || null,
+                  holdReason: '',
+                  resumeDate: '',
+                  activityLog: [
+                    {
+                      id: `act_${Date.now()}`,
+                      timestamp: new Date().toISOString(),
+                      author: currentUserName,
+                      action: 'Lead created',
+                      type: 'note',
+                    },
+                  ],
                 };
 
                 if (isConnected) {
@@ -463,7 +480,7 @@ function ContentStudioApp() {
                     setToast('Lead added.');
                   } catch (err: any) {
                     setLocalLeads((prev) => [...prev, newFallbackLead]);
-                    setToast('Saved locally. Run database migration in Supabase to sync.');
+                    setToast('Saved locally.');
                   }
                 } else {
                   setLocalLeads((prev) => [...prev, newFallbackLead]);
@@ -475,6 +492,13 @@ function ContentStudioApp() {
                 if (isConnected) {
                   studio.updateLead(leadId, patch);
                 }
+              }}
+              onDeleteLead={(leadId) => {
+                setLocalLeads((prev) => prev.filter((l) => l.id !== leadId));
+                if (isConnected) {
+                  studio.deleteLead(leadId);
+                }
+                setToast('Lead removed.');
               }}
             />
           }

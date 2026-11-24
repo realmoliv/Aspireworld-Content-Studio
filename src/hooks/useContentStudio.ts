@@ -3,7 +3,7 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { uploadAssetFile, deleteAssetFile, getSignedAssetUrl, formatFileSize } from '@/lib/storage';
 import { getChecklistForType } from '@/constants';
 import type { Database } from '@/lib/database.types';
-import type { TeamMember } from '@/types';
+import type { TeamMember, Lead, LeadActivity } from '@/types';
 
 export type Screen = 'calendar' | 'board' | 'references' | 'templates' | 'planner' | 'leads';
 export type Status =
@@ -78,18 +78,6 @@ export type Item = {
     time: string;
   }[];
   verifyDate?: boolean;
-};
-
-export type Lead = {
-  id: string;
-  date: string;
-  source: string;
-  name: string;
-  contact: string;
-  service: string;
-  budget: string;
-  status: string;
-  followUp: string;
 };
 
 export const specMap: Record<string, string[]> = {
@@ -299,6 +287,11 @@ export function useContentStudio(userId?: string) {
           budget: l.budget || '',
           status: l.status,
           followUp: l.follow_up || '',
+          owner: l.owner_name || '',
+          ownerId: l.owner_id || null,
+          holdReason: l.hold_reason || '',
+          resumeDate: l.resume_date || '',
+          activityLog: Array.isArray(l.activity_log) ? l.activity_log : [],
         }))
       );
     } catch (e: any) {
@@ -652,9 +645,31 @@ export function useContentStudio(userId?: string) {
     if (patch.budget !== undefined) dbPatch.budget = patch.budget;
     if (patch.status !== undefined) dbPatch.status = patch.status;
     if (patch.followUp !== undefined) dbPatch.follow_up = patch.followUp || null;
+    if (patch.owner !== undefined) dbPatch.owner_name = patch.owner;
+    if (patch.ownerId !== undefined) dbPatch.owner_id = patch.ownerId || null;
+    if (patch.holdReason !== undefined) dbPatch.hold_reason = patch.holdReason;
+    if (patch.resumeDate !== undefined) dbPatch.resume_date = patch.resumeDate || null;
+    if (patch.activityLog !== undefined) dbPatch.activity_log = patch.activityLog;
 
     try {
-      await supabase.from('leads').update(dbPatch).eq('id', leadId);
+      const { error } = await supabase.from('leads').update(dbPatch).eq('id', leadId);
+      if (error) {
+        // Fallback if extended columns are not yet applied via migration
+        if (error.code === '42703' || error.message?.includes('column')) {
+          const basicPatch: any = {};
+          if (patch.date !== undefined) basicPatch.lead_date = patch.date;
+          if (patch.source !== undefined) basicPatch.source = patch.source;
+          if (patch.name !== undefined) basicPatch.name = patch.name;
+          if (patch.contact !== undefined) basicPatch.contact = patch.contact;
+          if (patch.service !== undefined) basicPatch.service = patch.service;
+          if (patch.budget !== undefined) basicPatch.budget = patch.budget;
+          if (patch.status !== undefined) basicPatch.status = patch.status;
+          if (patch.followUp !== undefined) basicPatch.follow_up = patch.followUp || null;
+          await supabase.from('leads').update(basicPatch).eq('id', leadId);
+        } else {
+          console.error('Error updating lead in Supabase:', error);
+        }
+      }
     } catch (e) {
       console.error('Error updating lead in Supabase:', e);
     }
@@ -671,6 +686,19 @@ export function useContentStudio(userId?: string) {
       budget: '',
       status: 'New',
       followUp: '',
+      owner: '',
+      ownerId: userId || null,
+      holdReason: '',
+      resumeDate: '',
+      activityLog: [
+        {
+          id: `act_${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          author: 'System',
+          action: 'Lead created',
+          type: 'note',
+        },
+      ],
     };
 
     setLeads((curr) => [...curr, newLead]);
@@ -678,20 +706,34 @@ export function useContentStudio(userId?: string) {
     if (!isSupabaseConfigured || !userId) return newLead;
 
     try {
-      const { data, error: insertErr } = await supabase
+      const insertPayload: any = {
+        lead_date: newLead.date,
+        source: newLead.source,
+        name: newLead.name,
+        contact: newLead.contact,
+        service: newLead.service,
+        budget: newLead.budget,
+        status: newLead.status,
+        owner_id: userId,
+        activity_log: newLead.activityLog,
+      };
+
+      let { data, error: insertErr } = await supabase
         .from('leads')
-        .insert({
-          lead_date: newLead.date,
-          source: newLead.source,
-          name: newLead.name,
-          contact: newLead.contact,
-          service: newLead.service,
-          budget: newLead.budget,
-          status: newLead.status,
-          owner_id: userId,
-        })
+        .insert(insertPayload)
         .select('id')
         .single();
+
+      if (insertErr && (insertErr.code === '42703' || insertErr.message?.includes('column'))) {
+        delete insertPayload.activity_log;
+        const retry = await supabase
+          .from('leads')
+          .insert(insertPayload)
+          .select('id')
+          .single();
+        data = retry.data;
+        insertErr = retry.error;
+      }
 
       if (insertErr) {
         console.error('Error adding lead in Supabase:', insertErr);
@@ -710,6 +752,23 @@ export function useContentStudio(userId?: string) {
       return newLead;
     } catch (e) {
       console.error('Error adding lead in Supabase:', e);
+      throw e;
+    }
+  };
+
+  const deleteLead = async (leadId: string) => {
+    setLeads((curr) => curr.filter((l) => l.id !== leadId));
+
+    if (!isSupabaseConfigured) return;
+
+    try {
+      const { error } = await supabase.from('leads').delete().eq('id', leadId);
+      if (error) {
+        console.error('Error deleting lead from Supabase:', error);
+        throw error;
+      }
+    } catch (e) {
+      console.error('Error deleting lead from Supabase:', e);
       throw e;
     }
   };
@@ -770,6 +829,7 @@ export function useContentStudio(userId?: string) {
     addComment,
     updateLead,
     addLead,
+    deleteLead,
     uploadAsset,
     removeAsset,
     deleteItem,
