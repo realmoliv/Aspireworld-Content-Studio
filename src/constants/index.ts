@@ -134,6 +134,27 @@ export const templates: [string, ContentType, string][] = [
 
 export const savedReferences: ReferenceItem[] = [
   {
+    label: 'AW-APL-01 Raw Footages',
+    url: 'https://drive.google.com/drive/folders/1aB8AqRJy6WGMKGoPNa45TUt0qzPDJthC?usp=sharing',
+    type: 'Raw footage (Drive)',
+    pillar: 'Proof',
+    instruction: 'Main project raw camera footage and takes for edit.',
+  },
+  {
+    label: 'AW-APL-01 BTS',
+    url: 'https://drive.google.com/drive/folders/1pm__Wh84_6zClbYh93YO4RWHtFHpmCEj?usp=sharing',
+    type: 'Raw footage (Drive)',
+    pillar: 'Behind the Scenes',
+    instruction: 'Behind-the-scenes video and photo coverage.',
+  },
+  {
+    label: 'AW-APL-01 Final Deliverables',
+    url: 'https://drive.google.com/drive/folders/1q4er5N3sOLyIWes7kXwyOesPerWEq9zF?usp=sharing',
+    type: 'Brand asset',
+    pillar: 'Proof',
+    instruction: 'Master exports, color-graded deliverables and final cuts.',
+  },
+  {
     label: 'Trendzilla — Shark Tank sourcing',
     url: 'https://drive.google.com/drive/folders/1ibKPX6oXL0cbpCg-VnGRIzuosG571Xhr?usp=sharing',
     type: 'Raw footage (Drive)',

@@ -25,7 +25,10 @@ export function ReferenceView({ search, setSearch, onUse }: ReferenceViewProps) 
               r.label !== 'Cyberpunk Editorial Visual Moodboard' &&
               !r.url?.includes('582653270577713437')
           );
-          return cleaned.length > 0 ? cleaned : savedReferences;
+          // Merge latest platform savedReferences with custom ones
+          const existingUrls = new Set(cleaned.map((r: any) => r.url));
+          const missingDefaults = savedReferences.filter((def) => !existingUrls.has(def.url));
+          return [...missingDefaults, ...cleaned];
         }
       }
     } catch (e) {
