@@ -161,13 +161,6 @@ export const savedReferences: ReferenceItem[] = [
     pillar: 'Behind the Scenes',
     instruction: 'Use process footage. Keep cuts direct.',
   },
-  {
-    label: 'Cyberpunk Editorial Visual Moodboard',
-    url: 'https://www.pinterest.com/pin/582653270577713437/',
-    type: 'Pinterest / Moodboard',
-    pillar: 'Value',
-    instruction: 'Reference the high-contrast neon lighting, composition and grading.',
-  },
 ];
 
 export const slug = (x: string) => x.toLowerCase().replace(/ /g, '-').replace(/\//g, '-');

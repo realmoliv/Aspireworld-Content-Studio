@@ -18,7 +18,15 @@ export function ReferenceView({ search, setSearch, onUse }: ReferenceViewProps) 
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Filter out dummy/stale cyberpunk item if cached in user's browser
+          const cleaned = parsed.filter(
+            (r: any) =>
+              r.label !== 'Cyberpunk Editorial Visual Moodboard' &&
+              !r.url?.includes('582653270577713437')
+          );
+          return cleaned.length > 0 ? cleaned : savedReferences;
+        }
       }
     } catch (e) {
       console.warn('Failed to parse stored references', e);
@@ -119,6 +127,16 @@ export function ReferenceView({ search, setSearch, onUse }: ReferenceViewProps) 
                   OPEN SOURCE ↗
                 </a>
                 <Button onClick={() => onUse(r)}>USE IN ITEM</Button>
+                <button
+                  type="button"
+                  className="ref-card-delete-btn"
+                  onClick={() => {
+                    setLibraryRefs((prev) => prev.filter((item) => item.url !== r.url));
+                  }}
+                  title="Remove from library"
+                >
+                  ✕
+                </button>
               </div>
             </div>
           </article>

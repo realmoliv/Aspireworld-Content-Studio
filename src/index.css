@@ -741,6 +741,19 @@ main {
 .ref-actions a:hover {
   text-decoration: underline;
 }
+.ref-card-delete-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--grey);
+  font: 700 0.75rem "Barlow Condensed";
+  cursor: pointer;
+  padding: 0.35rem 0.5rem;
+  transition: all 0.15s ease;
+}
+.ref-card-delete-btn:hover {
+  color: var(--red);
+  border-color: rgba(252, 13, 18, 0.4);
+}
 .page-intro {
   margin-top: -1rem;
   margin-bottom: var(--space-4);
