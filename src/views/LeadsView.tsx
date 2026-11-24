@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import type { Lead, TeamMember, LeadActivity } from '@/types';
 import { SectionTitle, Button, Input, Select, Pill } from '@/components/ui';
 import {
@@ -26,29 +26,36 @@ function getDaysDifference(dateStr?: string): {
   diff: number | null;
   isToday: boolean;
   isOverdue: boolean;
+  formatted: string;
 } {
-  if (!dateStr || !dateStr.trim()) return { diff: null, isToday: false, isOverdue: false };
-  const target = new Date(dateStr + 'T00:00:00');
-  if (isNaN(target.getTime())) return { diff: null, isToday: false, isOverdue: false };
+  if (!dateStr) {
+    return { diff: null, isToday: false, isOverdue: false, formatted: 'No follow-up set' };
+  }
 
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const target = new Date(dateStr);
+  target.setHours(0, 0, 0, 0);
 
   const diffTime = target.getTime() - today.getTime();
   const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
+  const isToday = diffDays === 0;
+  const isOverdue = diffDays < 0;
+
   return {
     diff: diffDays,
-    isToday: diffDays === 0,
-    isOverdue: diffDays < 0,
+    isToday,
+    isOverdue,
+    formatted: dateStr,
   };
 }
 
 function formatLeadDate(dateStr?: string): string {
   if (!dateStr) return '—';
   try {
-    const d = new Date(dateStr + 'T00:00:00');
-    if (isNaN(d.getTime())) return dateStr;
+    const d = new Date(dateStr);
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   } catch {
     return dateStr;
@@ -59,6 +66,10 @@ function getOffsetDate(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+function getTodayDate(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 export function LeadsView({
@@ -73,11 +84,23 @@ export function LeadsView({
 }: LeadsViewProps) {
   // Modal states
   const [onHoldModalLead, setOnHoldModalLead] = useState<Lead | null>(null);
-  const [onHoldPrevStatus, setOnHoldPrevStatus] = useState<string>('New');
   const [selectedHoldReason, setSelectedHoldReason] = useState<string>('Budget');
   const [customHoldReason, setCustomHoldReason] = useState<string>('');
   const [holdResumeDate, setHoldResumeDate] = useState<string>(getOffsetDate(7));
+  const [holdNotes, setHoldNotes] = useState<string>('');
+  const [holdErrors, setHoldErrors] = useState<{ reason?: string; date?: string }>({});
+  const [isHoldSubmitting, setIsHoldSubmitting] = useState<boolean>(false);
+  const [showUnsavedDiscardModal, setShowUnsavedDiscardModal] = useState<boolean>(false);
 
+  // Track initial hold state to detect dirty changes
+  const holdInitialStateRef = useRef<{
+    reason: string;
+    customReason: string;
+    date: string;
+    notes: string;
+  }>({ reason: '', customReason: '', date: '', notes: '' });
+
+  // Date Change Modal State
   const [dateChangeModal, setDateChangeModal] = useState<{
     lead: Lead;
     oldDate: string;
@@ -86,12 +109,20 @@ export function LeadsView({
   const [selectedDateReason, setSelectedDateReason] = useState<string>('Client rescheduled');
   const [customDateReason, setCustomDateReason] = useState<string>('');
 
+  // Call Booked Modal State
   const [callBookedModalLead, setCallBookedModalLead] = useState<Lead | null>(null);
-  const [callBookedPrevStatus, setCallBookedPrevStatus] = useState<string>('New');
   const [callBookedDate, setCallBookedDate] = useState<string>(getOffsetDate(2));
+  const [callBookedError, setCallBookedError] = useState<string>('');
 
+  // Activity Log Modal State
   const [activeActivityLead, setActiveActivityLead] = useState<Lead | null>(null);
   const [newActivityNote, setNewActivityNote] = useState<string>('');
+
+  // Delete Lead Confirmation Modal (Poka-Yoke)
+  const [leadToDelete, setLeadToDelete] = useState<Lead | null>(null);
+
+  // Expandable row details (for compact table / mobile view)
+  const [expandedLeadIds, setExpandedLeadIds] = useState<Set<string>>(new Set());
 
   // Filters & Search
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -99,6 +130,7 @@ export function LeadsView({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [queueTab, setQueueTab] = useState<'all' | 'overdue' | 'today' | 'upcoming'>('all');
 
+  // Combined Team Members ensuring standard studio team is always available
   const effectiveTeamMembers = useMemo(() => {
     const list = [...(teamMembers || [])];
     for (const def of defaultTeamMembers) {
@@ -120,13 +152,71 @@ export function LeadsView({
     return match ? match.full_name : owner;
   };
 
+  // Body scroll lock when any modal is open
+  useEffect(() => {
+    const isAnyModalOpen = Boolean(
+      onHoldModalLead ||
+      dateChangeModal ||
+      callBookedModalLead ||
+      activeActivityLead ||
+      leadToDelete ||
+      showUnsavedDiscardModal
+    );
+    if (isAnyModalOpen) {
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = prevOverflow;
+      };
+    }
+  }, [
+    onHoldModalLead,
+    dateChangeModal,
+    callBookedModalLead,
+    activeActivityLead,
+    leadToDelete,
+    showUnsavedDiscardModal,
+  ]);
+
+  // Keyboard navigation & Escape key support
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showUnsavedDiscardModal) {
+          setShowUnsavedDiscardModal(false);
+        } else if (onHoldModalLead) {
+          requestCloseHoldModal();
+        } else if (dateChangeModal) {
+          setDateChangeModal(null);
+        } else if (callBookedModalLead) {
+          setCallBookedModalLead(null);
+        } else if (activeActivityLead) {
+          setActiveActivityLead(null);
+        } else if (leadToDelete) {
+          setLeadToDelete(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
+  const toggleRowExpanded = (id: string) => {
+    setExpandedLeadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const add = () => {
     if (onAddLead) {
       onAddLead();
     } else {
       const newLead: Lead = {
         id: `l${Date.now()}`,
-        date: new Date().toISOString().slice(0, 10),
+        date: getTodayDate(),
         source: 'Organic',
         name: 'New lead',
         contact: '',
@@ -168,8 +258,51 @@ export function LeadsView({
       action,
       type,
     };
-    const updatedLog = [newEntry, ...(lead.activityLog || [])];
-    return updatedLog;
+    return [newEntry, ...(lead.activityLog || [])];
+  };
+
+  // Open Hold Lead Modal
+  const openHoldModal = (lead: Lead) => {
+    const defaultDate = lead.followUp && lead.followUp >= getTodayDate() ? lead.followUp : getOffsetDate(7);
+    const isKnownReason = lead.holdReason && (holdReasons as readonly string[]).includes(lead.holdReason);
+    const initialReason = lead.holdReason ? (isKnownReason ? lead.holdReason : 'Other / Custom') : 'Budget';
+    const initialCustom = lead.holdReason && !isKnownReason ? lead.holdReason : '';
+
+    setSelectedHoldReason(initialReason);
+    setCustomHoldReason(initialCustom);
+    setHoldResumeDate(defaultDate);
+    setHoldNotes('');
+    setHoldErrors({});
+    setIsHoldSubmitting(false);
+
+    holdInitialStateRef.current = {
+      reason: initialReason,
+      customReason: initialCustom,
+      date: defaultDate,
+      notes: '',
+    };
+
+    setOnHoldModalLead(lead);
+  };
+
+  // Check unsaved changes before closing Hold Modal
+  const requestCloseHoldModal = () => {
+    const isDirty =
+      selectedHoldReason !== holdInitialStateRef.current.reason ||
+      customHoldReason !== holdInitialStateRef.current.customReason ||
+      holdResumeDate !== holdInitialStateRef.current.date ||
+      holdNotes !== holdInitialStateRef.current.notes;
+
+    if (isDirty) {
+      setShowUnsavedDiscardModal(true);
+    } else {
+      setOnHoldModalLead(null);
+    }
+  };
+
+  const discardAndCloseHoldModal = () => {
+    setShowUnsavedDiscardModal(false);
+    setOnHoldModalLead(null);
   };
 
   // Status Change Handler
@@ -177,19 +310,15 @@ export function LeadsView({
     if (lead.status === newStatus) return;
 
     if (newStatus === 'On hold') {
-      setOnHoldPrevStatus(lead.status);
-      setOnHoldModalLead(lead);
-      setSelectedHoldReason('Budget');
-      setCustomHoldReason('');
-      setHoldResumeDate(lead.followUp || getOffsetDate(7));
+      openHoldModal(lead);
       return;
     }
 
     if (newStatus === 'Call booked') {
-      if (!lead.followUp) {
-        setCallBookedPrevStatus(lead.status);
+      if (!lead.followUp || lead.followUp < getTodayDate()) {
         setCallBookedModalLead(lead);
         setCallBookedDate(getOffsetDate(2));
+        setCallBookedError('');
         return;
       }
     }
@@ -197,14 +326,43 @@ export function LeadsView({
     const actionText = `${currentUser} → Status changed from ${lead.status} to ${newStatus}`;
     const newLog = logActivity(lead, actionText, 'status');
     update(lead.id, { status: newStatus, activityLog: newLog });
+    if (setToast) setToast(`Status updated to ${newStatus}`);
   };
 
-  // Confirm On Hold Modal
+  // Validate Hold Form
+  const validateHoldForm = (): boolean => {
+    const errors: { reason?: string; date?: string } = {};
+    const effectiveReason = selectedHoldReason === 'Other / Custom' ? customHoldReason.trim() : (customHoldReason.trim() || selectedHoldReason);
+
+    if (!effectiveReason) {
+      errors.reason = 'Primary reason is required.';
+    }
+
+    const todayStr = getTodayDate();
+    if (!holdResumeDate) {
+      errors.date = 'Resume / follow-up date is required.';
+    } else if (holdResumeDate < todayStr) {
+      errors.date = 'Resume date cannot be in the past.';
+    }
+
+    setHoldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // Confirm On Hold Modal Submission
   const confirmOnHold = () => {
-    if (!onHoldModalLead) return;
-    const effectiveReason = customHoldReason.trim() || selectedHoldReason;
+    if (!onHoldModalLead || isHoldSubmitting) return;
+
+    if (!validateHoldForm()) {
+      return;
+    }
+
+    setIsHoldSubmitting(true);
+
+    const effectiveReason = selectedHoldReason === 'Other / Custom' ? customHoldReason.trim() : (customHoldReason.trim() || selectedHoldReason);
     const formattedDate = formatLeadDate(holdResumeDate);
-    const actionText = `${currentUser} → On hold, resume ${formattedDate}, reason: ${effectiveReason}`;
+    const noteSuffix = holdNotes.trim() ? ` (Notes: ${holdNotes.trim()})` : '';
+    const actionText = `${currentUser} → On hold, resume ${formattedDate}, reason: ${effectiveReason}${noteSuffix}`;
 
     const newLog = logActivity(onHoldModalLead, actionText, 'status');
 
@@ -217,20 +375,24 @@ export function LeadsView({
     });
 
     setOnHoldModalLead(null);
-    if (setToast) setToast(`Lead placed on hold until ${formattedDate}.`);
-  };
-
-  // Cancel On Hold Modal
-  const cancelOnHold = () => {
-    setOnHoldModalLead(null);
+    setIsHoldSubmitting(false);
+    if (setToast) setToast(`Lead "${onHoldModalLead.name}" placed on hold until ${formattedDate}.`);
   };
 
   // Confirm Call Booked Modal
   const confirmCallBooked = () => {
     if (!callBookedModalLead) return;
+    if (!callBookedDate) {
+      setCallBookedError('Call date is required.');
+      return;
+    }
+    if (callBookedDate < getTodayDate()) {
+      setCallBookedError('Call date cannot be in the past.');
+      return;
+    }
+
     const formattedDate = formatLeadDate(callBookedDate);
     const actionText = `${currentUser} → Call booked for ${formattedDate}`;
-
     const newLog = logActivity(callBookedModalLead, actionText, 'status');
 
     update(callBookedModalLead.id, {
@@ -248,33 +410,33 @@ export function LeadsView({
     const oldDate = lead.followUp || '';
     if (newDate === oldDate) return;
 
-    // If changing an already set date, prompt for reason
-    if (oldDate && newDate) {
-      setDateChangeModal({ lead, oldDate, newDate });
+    if (oldDate && oldDate !== newDate) {
+      setDateChangeModal({
+        lead,
+        oldDate,
+        newDate,
+      });
       setSelectedDateReason('Client rescheduled');
       setCustomDateReason('');
-      return;
+    } else {
+      const actionText = `${currentUser} → Follow-up scheduled for ${formatLeadDate(newDate)}`;
+      const newLog = logActivity(lead, actionText, 'date_change');
+      update(lead.id, { followUp: newDate, activityLog: newLog });
+      if (setToast) setToast(`Follow-up date updated to ${formatLeadDate(newDate)}.`);
     }
-
-    // Direct change if previously empty
-    const actionText = `${currentUser} → Follow-up set to ${formatLeadDate(newDate)}`;
-    const newLog = logActivity(lead, actionText, 'date_change');
-    update(lead.id, { followUp: newDate, activityLog: newLog });
   };
 
-  // Confirm Date Change
+  // Confirm Date Change Modal
   const confirmDateChange = () => {
     if (!dateChangeModal) return;
     const { lead, oldDate, newDate } = dateChangeModal;
     const effectiveReason = customDateReason.trim() || selectedDateReason;
-    const actionText = `${currentUser} → Follow-up changed from ${formatLeadDate(
-      oldDate
-    )} to ${formatLeadDate(newDate)} (${effectiveReason})`;
+    const actionText = `${currentUser} → Follow-up changed from ${formatLeadDate(oldDate)} to ${formatLeadDate(newDate)} (${effectiveReason})`;
 
     const newLog = logActivity(lead, actionText, 'date_change');
     update(lead.id, { followUp: newDate, activityLog: newLog });
     setDateChangeModal(null);
-    if (setToast) setToast(`Follow-up date updated.`);
+    if (setToast) setToast(`Follow-up date updated to ${formatLeadDate(newDate)}.`);
   };
 
   // Owner Change
@@ -301,6 +463,19 @@ export function LeadsView({
     if (setToast) setToast('Activity note logged.');
   };
 
+  // Delete Lead Handler with Poka-Yoke confirmation
+  const confirmDeleteLead = () => {
+    if (!leadToDelete) return;
+    const name = leadToDelete.name;
+    if (onDeleteLead) {
+      onDeleteLead(leadToDelete.id);
+    } else {
+      setLeads((curr) => curr.filter((x) => x.id !== leadToDelete.id));
+    }
+    setLeadToDelete(null);
+    if (setToast) setToast(`Lead "${name}" deleted.`);
+  };
+
   // Calculate Actionable Follow-up Queues
   const activeFollowUps = leads
     .filter((l) => !['Closed', 'Cancelled', 'Lost', 'Wrong data'].includes(l.status) && l.followUp)
@@ -322,7 +497,7 @@ export function LeadsView({
       ? upcomingLeads
       : [...overdueLeads, ...todayLeads, ...upcomingLeads];
 
-  // Table filtering
+  // Filtering
   const filteredLeads = leads.filter((l) => {
     if (statusFilter !== 'ALL' && l.status !== statusFilter) return false;
     const resolvedOwner = getSelectedOwnerValue(l.owner) || 'Unassigned';
@@ -348,7 +523,7 @@ export function LeadsView({
         eyebrow="CLIENT PIPELINE"
         title="LEAD TRACKER"
         action={
-          <Button variant="primary" onClick={add}>
+          <Button variant="primary" onClick={add} className="add-lead-top-btn">
             + ADD LEAD
           </Button>
         }
@@ -363,7 +538,7 @@ export function LeadsView({
           ['ON HOLD', leads.filter((l) => l.status === 'On hold').length],
           ['CLOSED', leads.filter((l) => l.status === 'Closed').length],
         ].map(([label, val]) => (
-          <div key={label as string}>
+          <div key={label as string} className="lead-stat-card">
             <strong>{String(val).padStart(2, '0')}</strong>
             <span>{label}</span>
           </div>
@@ -387,7 +562,7 @@ export function LeadsView({
               className={`queue-pill-btn ${queueTab === 'all' ? 'active' : ''}`}
               onClick={() => setQueueTab('all')}
             >
-              ALL QUEUE ({activeFollowUps.length})
+              ALL ({activeFollowUps.length})
             </button>
             <button
               type="button"
@@ -452,7 +627,7 @@ export function LeadsView({
                   </p>
                   {l.status === 'On hold' && l.holdReason && (
                     <small className="queue-card-hold-note">
-                      ⏸ <strong>Reason:</strong> {l.holdReason}
+                      ⏸ <strong>Hold:</strong> {l.holdReason}
                     </small>
                   )}
                   <div className="queue-card-owner">
@@ -467,18 +642,14 @@ export function LeadsView({
                     className="queue-action-btn"
                     onClick={() => setActiveActivityLead(l)}
                   >
-                    📜 LOG ACTIVITY
+                    📜 LOGS
                   </button>
                   <button
                     type="button"
                     className="queue-action-btn primary"
                     onClick={() => {
                       if (l.status === 'On hold') {
-                        setOnHoldPrevStatus(l.status);
-                        setOnHoldModalLead(l);
-                        setSelectedHoldReason(l.holdReason || 'Budget');
-                        setCustomHoldReason('');
-                        setHoldResumeDate(l.followUp || getOffsetDate(7));
+                        openHoldModal(l);
                       } else {
                         setDateChangeModal({
                           lead: l,
@@ -546,22 +717,17 @@ export function LeadsView({
         </div>
       </div>
 
-      {/* LEADS TABLE */}
-      <div className="table-wrap leads-table-wrap">
-        <table>
+      {/* 1. DESKTOP & TABLET TABLE LAYOUT (Zero horizontal scroll on 1366px+) */}
+      <div className="table-wrap leads-table-wrap desktop-only-table">
+        <table className="leads-table-refactored">
           <thead>
             <tr>
-              <th style={{ width: '11rem' }}>STATUS</th>
-              <th style={{ width: '9rem' }}>DATE</th>
-              <th style={{ width: '8.5rem' }}>SOURCE</th>
-              <th>NAME</th>
-              <th>CONTACT</th>
-              <th>SERVICE NEEDED</th>
-              <th style={{ width: '8rem' }}>BUDGET</th>
-              <th style={{ width: '11rem' }}>OWNER</th>
-              <th style={{ width: '13rem' }}>FOLLOW-UP & DEADLINE</th>
-              <th style={{ width: '9.5rem' }}>ACTIVITY</th>
-              <th style={{ width: '3.5rem' }}>DEL</th>
+              <th style={{ width: '25%' }}>LEAD & CONTACT</th>
+              <th style={{ width: '18%' }}>STATUS & HOLD</th>
+              <th style={{ width: '18%' }}>SERVICE & VALUE</th>
+              <th style={{ width: '16%' }}>OWNER</th>
+              <th style={{ width: '15%' }}>FOLLOW-UP & URGENCY</th>
+              <th style={{ width: '8%', textAlign: 'right' }}>ACTIONS</th>
             </tr>
           </thead>
           <tbody>
@@ -576,103 +742,450 @@ export function LeadsView({
               const isCancelledOrLost = l.status === 'Cancelled' || l.status === 'Lost';
               const isCallBookedOrHold = l.status === 'Call booked' || l.status === 'On hold';
               const isMissingRequiredFollowUp = isCallBookedOrHold && !l.followUp;
+              const isExpanded = expandedLeadIds.has(l.id);
 
               return (
-                <tr
-                  key={l.id}
-                  className={`lead-row ${
-                    isWrongData ? 'row-wrong-data' : isCancelledOrLost ? 'row-cancelled' : ''
-                  }`}
-                  style={{ borderLeft: `3px solid ${statusCfg.color}` }}
-                >
-                  {/* STATUS & COLOR INDICATOR */}
-                  <td>
-                    <div className="lead-status-select-wrap">
-                      <span
-                        className="status-color-dot"
-                        style={{ backgroundColor: statusCfg.color }}
-                        title={l.status}
-                      />
+                <React.Fragment key={l.id}>
+                  <tr
+                    className={`lead-row ${
+                      isWrongData ? 'row-wrong-data' : isCancelledOrLost ? 'row-cancelled' : ''
+                    } ${isExpanded ? 'row-expanded' : ''}`}
+                    style={{ borderLeft: `3px solid ${statusCfg.color}` }}
+                  >
+                    {/* 1. LEAD & CONTACT */}
+                    <td>
+                      <div className="cell-lead-header">
+                        <strong
+                          className="lead-name-link"
+                          onClick={() => toggleRowExpanded(l.id)}
+                          title="Click to expand details"
+                        >
+                          {l.name}
+                        </strong>
+                        <div className="lead-meta-sub">
+                          <span className="lead-contact-text" title={l.contact}>
+                            {l.contact || 'No contact'}
+                          </span>
+                          <span className="meta-dot">•</span>
+                          <span className="lead-source-badge">{l.source}</span>
+                          <span className="meta-dot">•</span>
+                          <span className="lead-date-text">{formatLeadDate(l.date)}</span>
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* 2. STATUS & COLOR INDICATOR */}
+                    <td>
+                      <div className="lead-status-select-wrap">
+                        <span
+                          className="status-color-dot"
+                          style={{ backgroundColor: statusCfg.color }}
+                          title={l.status}
+                        />
+                        <Select
+                          value={l.status}
+                          onChange={(e) => handleStatusChange(l, e.target.value)}
+                          className={`select-status select-status-${l.status.toLowerCase().replace(/\s+/g, '-')}`}
+                        >
+                          {leadStatuses.map((st) => (
+                            <option key={st} value={st}>
+                              {st}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                      {l.status === 'On hold' && (
+                        <div
+                          className="hold-indicator-tag"
+                          onClick={() => openHoldModal(l)}
+                          title="Click to view or edit hold details"
+                        >
+                          ⏸ {l.holdReason || 'Hold'} • {formatLeadDate(l.resumeDate)}
+                        </div>
+                      )}
+                    </td>
+
+                    {/* 3. SERVICE & BUDGET */}
+                    <td>
+                      <div className="cell-service-value">
+                        <span className="lead-service-title">{l.service || 'Service TBD'}</span>
+                        <span className="lead-budget-tag">{l.budget || 'Budget TBD'}</span>
+                      </div>
+                    </td>
+
+                    {/* 4. OWNER */}
+                    <td>
                       <Select
-                        value={l.status}
-                        onChange={(e) => handleStatusChange(l, e.target.value)}
-                        className={`select-status select-status-${l.status.toLowerCase().replace(/\s+/g, '-')}`}
+                        value={getSelectedOwnerValue(l.owner)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const member = effectiveTeamMembers.find((m) => m.full_name === val);
+                          handleOwnerChange(l, val, member?.id || null);
+                        }}
+                        className="select-lead-owner"
                       >
-                        {leadStatuses.map((st) => (
-                          <option key={st} value={st}>
-                            {st}
+                        <option value="">Unassigned</option>
+                        {effectiveTeamMembers.map((m) => (
+                          <option key={m.id} value={m.full_name}>
+                            {m.full_name} ({getUserTitleCaseDesignation(m.full_name, m.role)})
                           </option>
                         ))}
+                        {l.owner && !effectiveTeamMembers.some((m) => m.full_name === getSelectedOwnerValue(l.owner)) && (
+                          <option value={l.owner}>{l.owner}</option>
+                        )}
                       </Select>
-                    </div>
-                    {l.status === 'On hold' && l.holdReason && (
-                      <span className="lead-hold-badge" title={l.holdReason}>
-                        ⏸ {l.holdReason.split('—')[0]}
-                      </span>
-                    )}
-                  </td>
+                    </td>
 
-                  {/* DATE */}
-                  <td>
-                    <Input
-                      type="date"
-                      value={l.date}
-                      onChange={(e) => update(l.id, { date: e.target.value })}
-                    />
-                  </td>
+                    {/* 5. FOLLOW-UP & DAYS LEFT */}
+                    <td>
+                      <div className="cell-followup-compact">
+                        <div
+                          className="followup-interactive-date"
+                          onClick={() => {
+                            setDateChangeModal({
+                              lead: l,
+                              oldDate: l.followUp || '',
+                              newDate: getOffsetDate(3),
+                            });
+                          }}
+                          title="Click to reschedule follow-up date"
+                        >
+                          <span>📅 {formatLeadDate(l.followUp)}</span>
+                          <span className="date-edit-icon">✎</span>
+                        </div>
 
-                  {/* SOURCE */}
-                  <td>
-                    <Select
-                      value={l.source}
-                      onChange={(e) => update(l.id, { source: e.target.value })}
-                    >
-                      {leadSources.map((x) => (
-                        <option key={x} value={x}>
-                          {x}
-                        </option>
-                      ))}
-                    </Select>
-                  </td>
+                        {/* Relative Days Left Badge */}
+                        <div className="followup-badge-container">
+                          {isMissingRequiredFollowUp ? (
+                            <span className="days-badge badge-required-pulse">
+                              ⚠ DATE REQUIRED
+                            </span>
+                          ) : diffInfo.diff !== null ? (
+                            <span
+                              className={`days-badge ${
+                                diffInfo.isOverdue
+                                  ? 'badge-danger'
+                                  : diffInfo.isToday
+                                  ? 'badge-warning'
+                                  : diffInfo.diff === 1
+                                  ? 'badge-tomorrow'
+                                  : 'badge-future'
+                              }`}
+                            >
+                              {diffInfo.isOverdue
+                                ? `OVERDUE (${Math.abs(diffInfo.diff)}d AGO)`
+                                : diffInfo.isToday
+                                ? '🔔 DUE TODAY'
+                                : diffInfo.diff === 1
+                                ? 'TOMORROW'
+                                : `IN ${diffInfo.diff} DAYS`}
+                            </span>
+                          ) : (
+                            <span className="days-badge badge-none">No date</span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
 
-                  {/* NAME */}
-                  <td>
-                    <Input
-                      value={l.name}
-                      placeholder="Lead name"
-                      onChange={(e) => update(l.id, { name: e.target.value })}
-                    />
-                  </td>
+                    {/* 6. ACTIONS (Expand, History, Delete) */}
+                    <td>
+                      <div className="row-action-buttons">
+                        <button
+                          type="button"
+                          className={`action-icon-btn ${isExpanded ? 'active' : ''}`}
+                          onClick={() => toggleRowExpanded(l.id)}
+                          title={isExpanded ? 'Collapse row details' : 'Expand full details'}
+                        >
+                          {isExpanded ? '▲' : '▼'}
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-btn"
+                          onClick={() => setActiveActivityLead(l)}
+                          title="View activity log"
+                        >
+                          📝 <small>{l.activityLog?.length || 0}</small>
+                        </button>
+                        <button
+                          type="button"
+                          className="action-icon-btn del-btn"
+                          onClick={() => setLeadToDelete(l)}
+                          title="Delete lead (Poka-Yoke confirmation)"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
 
-                  {/* CONTACT */}
-                  <td>
-                    <Input
-                      value={l.contact}
-                      placeholder="@handle / phone"
-                      onChange={(e) => update(l.id, { contact: e.target.value })}
-                    />
-                  </td>
+                  {/* EXPANDABLE ROW DETAILS (Secondary info kept accessible without cluttering) */}
+                  {isExpanded && (
+                    <tr className="expanded-lead-details-row">
+                      <td colSpan={6}>
+                        <div className="expanded-details-container">
+                          <div className="details-col">
+                            <span className="eyebrow">QUICK EDIT RECORD</span>
+                            <div className="details-input-grid">
+                              <label>
+                                <span>LEAD NAME:</span>
+                                <Input
+                                  value={l.name}
+                                  onChange={(e) => update(l.id, { name: e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>CONTACT INFO:</span>
+                                <Input
+                                  value={l.contact}
+                                  placeholder="@handle or phone"
+                                  onChange={(e) => update(l.id, { contact: e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>SERVICE REQUIRED:</span>
+                                <Input
+                                  value={l.service}
+                                  onChange={(e) => update(l.id, { service: e.target.value })}
+                                />
+                              </label>
+                              <label>
+                                <span>BUDGET:</span>
+                                <Input
+                                  value={l.budget}
+                                  onChange={(e) => update(l.id, { budget: e.target.value })}
+                                />
+                              </label>
+                            </div>
+                          </div>
 
-                  {/* SERVICE */}
-                  <td>
-                    <Input
-                      value={l.service}
-                      placeholder="e.g. Music Video"
-                      onChange={(e) => update(l.id, { service: e.target.value })}
-                    />
-                  </td>
+                          <div className="details-col">
+                            <span className="eyebrow">HOLD & FOLLOW-UP SETTINGS</span>
+                            {l.status === 'On hold' ? (
+                              <div className="hold-details-box">
+                                <div className="hold-info-line">
+                                  <span>HOLD REASON:</span>
+                                  <strong>{l.holdReason || 'None specified'}</strong>
+                                </div>
+                                <div className="hold-info-line">
+                                  <span>RESUME DATE:</span>
+                                  <strong>{formatLeadDate(l.resumeDate)}</strong>
+                                </div>
+                                <Button
+                                  variant="primary"
+                                  onClick={() => openHoldModal(l)}
+                                  style={{ marginTop: '0.5rem', fontSize: '0.75rem' }}
+                                >
+                                  MODIFY HOLD SETTINGS ↗
+                                </Button>
+                              </div>
+                            ) : (
+                              <div className="not-on-hold-box">
+                                <p>Lead is active. Put on hold to pause follow-ups until a future date.</p>
+                                <Button
+                                  onClick={() => openHoldModal(l)}
+                                  style={{ fontSize: '0.75rem' }}
+                                >
+                                  PLACE ON HOLD ⏸
+                                </Button>
+                              </div>
+                            )}
+                          </div>
 
-                  {/* BUDGET */}
-                  <td>
-                    <Input
-                      value={l.budget}
-                      placeholder="₹75,000"
-                      onChange={(e) => update(l.id, { budget: e.target.value })}
-                    />
-                  </td>
+                          <div className="details-col">
+                            <span className="eyebrow">RECENT ACTIVITY ({l.activityLog?.length || 0})</span>
+                            <div className="details-activity-snippet">
+                              {l.activityLog && l.activityLog.length > 0 ? (
+                                l.activityLog.slice(0, 3).map((act) => (
+                                  <div key={act.id} className="mini-activity-item">
+                                    <span className="mini-act-author">{act.author}</span>
+                                    <p className="mini-act-text">{act.action}</p>
+                                    <small className="mini-act-time">
+                                      {new Date(act.timestamp).toLocaleDateString([], {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })}
+                                    </small>
+                                  </div>
+                                ))
+                              ) : (
+                                <p className="text-muted">No activity entries yet.</p>
+                              )}
+                              <Button
+                                onClick={() => setActiveActivityLead(l)}
+                                style={{ fontSize: '0.75rem', marginTop: '0.4rem' }}
+                              >
+                                FULL ACTIVITY TIMELINE ➔
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
-                  {/* OWNER */}
-                  <td>
+      {/* 2. MOBILE CARD VIEW (320px–767px: Dedicated responsive lead cards) */}
+      <div className="leads-mobile-card-list">
+        {filteredLeads.map((l) => {
+          const diffInfo = getDaysDifference(l.followUp);
+          const statusCfg = leadStatusConfig[l.status] || {
+            color: '#fff',
+            bg: 'transparent',
+            border: '#fff',
+          };
+          const isCallBookedOrHold = l.status === 'Call booked' || l.status === 'On hold';
+          const isMissingRequiredFollowUp = isCallBookedOrHold && !l.followUp;
+          const isExpanded = expandedLeadIds.has(l.id);
+
+          return (
+            <div
+              key={l.id}
+              className={`mobile-lead-card ${l.status === 'On hold' ? 'card-on-hold' : ''}`}
+              style={{ borderLeft: `4px solid ${statusCfg.color}` }}
+            >
+              {/* Card Header: Status & Urgency Badge */}
+              <div className="mobile-card-top-row">
+                <span
+                  className="lead-status-pill"
+                  style={{
+                    color: statusCfg.color,
+                    backgroundColor: statusCfg.bg,
+                    borderColor: statusCfg.border,
+                  }}
+                >
+                  {l.status.toUpperCase()}
+                </span>
+
+                {isMissingRequiredFollowUp ? (
+                  <span className="days-badge badge-required-pulse">⚠ DATE REQUIRED</span>
+                ) : diffInfo.diff !== null ? (
+                  <span
+                    className={`days-badge ${
+                      diffInfo.isOverdue
+                        ? 'badge-danger'
+                        : diffInfo.isToday
+                        ? 'badge-warning'
+                        : diffInfo.diff === 1
+                        ? 'badge-tomorrow'
+                        : 'badge-future'
+                    }`}
+                  >
+                    {diffInfo.isOverdue
+                      ? `OVERDUE (${Math.abs(diffInfo.diff)}d AGO)`
+                      : diffInfo.isToday
+                      ? '🔔 DUE TODAY'
+                      : diffInfo.diff === 1
+                      ? 'TOMORROW'
+                      : `IN ${diffInfo.diff} DAYS`}
+                  </span>
+                ) : null}
+              </div>
+
+              {/* Card Title & Meta */}
+              <div className="mobile-card-identity">
+                <h3 className="mobile-card-name" onClick={() => toggleRowExpanded(l.id)}>
+                  {l.name}
+                </h3>
+                <div className="mobile-card-contact-line">
+                  <span>{l.contact || 'No contact provided'}</span>
+                  <span className="meta-dot">•</span>
+                  <span className="lead-source-badge">{l.source}</span>
+                </div>
+              </div>
+
+              {/* Key Lead Metrics Grid */}
+              <div className="mobile-card-info-grid">
+                <div className="mobile-info-cell">
+                  <small>SERVICE</small>
+                  <strong>{l.service || 'Service TBD'}</strong>
+                </div>
+                <div className="mobile-info-cell">
+                  <small>BUDGET</small>
+                  <strong>{l.budget || 'Budget TBD'}</strong>
+                </div>
+                <div className="mobile-info-cell">
+                  <small>OWNER</small>
+                  <strong>{l.owner || 'Unassigned'}</strong>
+                </div>
+                <div className="mobile-info-cell">
+                  <small>FOLLOW-UP</small>
+                  <strong>{formatLeadDate(l.followUp)}</strong>
+                </div>
+              </div>
+
+              {/* Hold Banner if on hold */}
+              {l.status === 'On hold' && (
+                <div className="mobile-card-hold-banner" onClick={() => openHoldModal(l)}>
+                  <span>⏸ <strong>ON HOLD:</strong> {l.holdReason || 'Reason'}</span>
+                  <small>Resumes {formatLeadDate(l.resumeDate)}</small>
+                </div>
+              )}
+
+              {/* Mobile Card Action Buttons (Min 44px touch targets) */}
+              <div className="mobile-card-actions-bar">
+                <div className="mobile-status-dropdown-wrap">
+                  <Select
+                    value={l.status}
+                    onChange={(e) => handleStatusChange(l, e.target.value)}
+                    className="mobile-status-select"
+                  >
+                    {leadStatuses.map((st) => (
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+
+                <button
+                  type="button"
+                  className="mobile-touch-btn"
+                  onClick={() => openHoldModal(l)}
+                  title="Configure Hold"
+                >
+                  ⏸ HOLD
+                </button>
+
+                <button
+                  type="button"
+                  className="mobile-touch-btn"
+                  onClick={() => setActiveActivityLead(l)}
+                  title="View Activity Logs"
+                >
+                  📜 {l.activityLog?.length || 0}
+                </button>
+
+                <button
+                  type="button"
+                  className="mobile-touch-btn"
+                  onClick={() => toggleRowExpanded(l.id)}
+                  title="Toggle details"
+                >
+                  {isExpanded ? '▲' : '▼ DETAILS'}
+                </button>
+
+                <button
+                  type="button"
+                  className="mobile-touch-btn mobile-del-btn"
+                  onClick={() => setLeadToDelete(l)}
+                  title="Delete lead"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Mobile Card Expanded Details */}
+              {isExpanded && (
+                <div className="mobile-card-expanded-body">
+                  <div className="mobile-expanded-field">
+                    <label>OWNER ASSIGNMENT</label>
                     <Select
                       value={getSelectedOwnerValue(l.owner)}
                       onChange={(e) => {
@@ -687,198 +1200,266 @@ export function LeadsView({
                           {m.full_name} ({getUserTitleCaseDesignation(m.full_name, m.role)})
                         </option>
                       ))}
-                      {l.owner && !effectiveTeamMembers.some((m) => m.full_name === getSelectedOwnerValue(l.owner)) && (
-                        <option value={l.owner}>{l.owner}</option>
-                      )}
                     </Select>
-                  </td>
+                  </div>
 
-                  {/* FOLLOW-UP & DAYS LEFT */}
-                  <td>
-                    <div className="followup-cell-wrap">
-                      <Input
-                        type="date"
-                        value={l.followUp || ''}
-                        required={isCallBookedOrHold}
-                        onChange={(e) => handleFollowUpChange(l, e.target.value)}
-                        className={isMissingRequiredFollowUp ? 'input-required-danger' : ''}
-                      />
+                  <div className="mobile-expanded-field">
+                    <label>FOLLOW-UP DATE</label>
+                    <Input
+                      type="date"
+                      value={l.followUp || ''}
+                      onChange={(e) => handleFollowUpChange(l, e.target.value)}
+                    />
+                  </div>
 
-                      {/* Relative Days Left Badge */}
-                      <div className="followup-badge-container">
-                        {isMissingRequiredFollowUp ? (
-                          <span className="days-badge badge-required-pulse">
-                            ⚠ DATE REQUIRED
-                          </span>
-                        ) : diffInfo.diff !== null ? (
-                          <span
-                            className={`days-badge ${
-                              diffInfo.isOverdue
-                                ? 'badge-danger'
-                                : diffInfo.isToday
-                                ? 'badge-warning'
-                                : diffInfo.diff === 1
-                                ? 'badge-tomorrow'
-                                : 'badge-future'
-                            }`}
-                          >
-                            {diffInfo.isOverdue
-                              ? `OVERDUE (${Math.abs(diffInfo.diff)}d AGO)`
-                              : diffInfo.isToday
-                              ? '🔔 DUE TODAY'
-                              : diffInfo.diff === 1
-                              ? 'TOMORROW'
-                              : `IN ${diffInfo.diff} DAYS`}
-                          </span>
-                        ) : (
-                          <span className="days-badge badge-none">No date</span>
-                        )}
-                      </div>
-                    </div>
-                  </td>
+                  <div className="mobile-expanded-field">
+                    <label>SERVICE</label>
+                    <Input
+                      value={l.service}
+                      onChange={(e) => update(l.id, { service: e.target.value })}
+                    />
+                  </div>
 
-                  {/* ACTIVITY LOG BUTTON */}
-                  <td>
-                    <button
-                      type="button"
-                      className="lead-activity-btn"
-                      onClick={() => setActiveActivityLead(l)}
-                      title="View complete activity log and notes"
-                    >
-                      <span>📜</span>
-                      <strong>{l.activityLog?.length || 0} LOGS</strong>
-                    </button>
-                    {l.activityLog && l.activityLog.length > 0 && (
-                      <small className="lead-latest-action" title={l.activityLog[0].action}>
-                        {l.activityLog[0].action}
-                      </small>
-                    )}
-                  </td>
-
-                  {/* DELETE ACTION */}
-                  <td>
-                    <button
-                      type="button"
-                      className="lead-del-btn"
-                      onClick={() => {
-                        if (confirm(`Delete lead "${l.name}"?`)) {
-                          if (onDeleteLead) onDeleteLead(l.id);
-                          else setLeads((curr) => curr.filter((x) => x.id !== l.id));
-                        }
-                      }}
-                      title="Delete lead"
-                    >
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+                  <div className="mobile-expanded-field">
+                    <label>BUDGET</label>
+                    <Input
+                      value={l.budget}
+                      onChange={(e) => update(l.id, { budget: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {/* 1. ON HOLD POPUP MODAL */}
+      {/* =========================================================================
+          1. HOLD LEAD MODAL (Centered, Viewport Safe, Poka-Yoke Safeguards)
+          ========================================================================= */}
       {onHoldModalLead && (
-        <div className="modal-backdrop" onClick={cancelOnHold}>
-          <div className="modal-content lead-popup-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" onClick={requestCloseHoldModal}>
+          <div
+            className="modal-content hold-lead-modal-dialog"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="hold-modal-title"
+          >
+            {/* Modal Header with Prominent Lead Name */}
             <div className="modal-head">
               <div>
-                <span className="eyebrow">STATUS CHANGE</span>
-                <h3>PLACE LEAD ON HOLD</h3>
+                <span className="eyebrow">STATUS CHANGE • POKA-YOKE SAFEGUARD</span>
+                <h3 id="hold-modal-title">PLACE LEAD ON HOLD</h3>
+                <div className="modal-lead-identity-pill">
+                  <span className="lead-indicator-dot" />
+                  <strong>LEAD: {onHoldModalLead.name}</strong>
+                  {onHoldModalLead.service && <span>• {onHoldModalLead.service}</span>}
+                </div>
               </div>
-              <button type="button" className="modal-close-btn" onClick={cancelOnHold}>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={requestCloseHoldModal}
+                aria-label="Close Hold Modal"
+              >
                 ✕
               </button>
             </div>
 
-            <div className="modal-body">
-              <p className="lead-popup-prompt">
-                Why is <strong>{onHoldModalLead.name}</strong> being put on hold? Select a reason
-                and choose when to resume follow-up.
-              </p>
-
-              <div className="hold-reasons-group">
-                <span className="eyebrow">SELECT PRIMARY REASON:</span>
+            {/* Modal Body: Internally Scrollable */}
+            <div className="modal-body hold-modal-body">
+              {/* Field 1: Primary Reason (Required) */}
+              <div className="modal-field-block">
+                <label className="field-label-required">
+                  <span>1. PRIMARY REASON FOR HOLD (REQUIRED):</span>
+                </label>
                 <div className="chips-grid">
                   {[
-                    ['Budget', 'Budget — Waiting on funds / client approval'],
-                    ['Timing', 'Timing — Busy with launch / requested delay'],
-                    ['Thinking', 'Thinking — Evaluating proposal & options'],
-                    ['Awaiting Partner', 'Awaiting approval from business partner'],
+                    ['Budget', 'Budget — Waiting on funds / client budget approval'],
+                    ['Timing', 'Timing — Busy with launch / requested temporary delay'],
+                    ['Thinking', 'Thinking — Evaluating proposal and options'],
+                    ['Awaiting Partner', 'Awaiting approval from business partner or team'],
+                    ['Other / Custom', 'Other / Custom reason...'],
                   ].map(([shortKey, fullLabel]) => (
                     <button
                       key={shortKey}
                       type="button"
                       className={`chip-btn ${selectedHoldReason === shortKey ? 'active' : ''}`}
-                      onClick={() => setSelectedHoldReason(shortKey)}
+                      onClick={() => {
+                        setSelectedHoldReason(shortKey);
+                        if (holdErrors.reason) {
+                          setHoldErrors((prev) => ({ ...prev, reason: undefined }));
+                        }
+                      }}
                     >
                       {fullLabel}
                     </button>
                   ))}
                 </div>
+
+                {/* Custom reason input if selected or custom text entered */}
+                {(selectedHoldReason === 'Other / Custom' || customHoldReason) && (
+                  <div style={{ marginTop: '0.4rem' }}>
+                    <Input
+                      value={customHoldReason}
+                      placeholder="Specify custom reason (e.g. Awaiting Q1 planning)..."
+                      onChange={(e) => {
+                        setCustomHoldReason(e.target.value);
+                        if (holdErrors.reason) {
+                          setHoldErrors((prev) => ({ ...prev, reason: undefined }));
+                        }
+                      }}
+                      className={holdErrors.reason ? 'input-error-danger' : ''}
+                    />
+                  </div>
+                )}
+
+                {holdErrors.reason && (
+                  <div className="field-error-msg">{holdErrors.reason}</div>
+                )}
               </div>
 
+              {/* Field 2: Additional context / notes (Optional) */}
               <div className="modal-field-block">
-                <span className="eyebrow">ADDITIONAL CONTEXT / NOTES (OPTIONAL):</span>
-                <Input
-                  value={customHoldReason}
-                  placeholder="e.g. Client requested reconnect after investor round..."
-                  onChange={(e) => setCustomHoldReason(e.target.value)}
+                <label>
+                  <span>2. ADDITIONAL CONTEXT / NOTES (OPTIONAL):</span>
+                </label>
+                <textarea
+                  className="modal-textarea"
+                  rows={3}
+                  value={holdNotes}
+                  placeholder="Add any specific context, discussion points or deliverables for the resume date..."
+                  onChange={(e) => setHoldNotes(e.target.value)}
                 />
               </div>
 
+              {/* Field 3: Resume / follow-up date (Required) */}
               <div className="modal-field-block">
-                <span className="eyebrow">RESUME / FOLLOW-UP DATE (REQUIRED):</span>
+                <label className="field-label-required">
+                  <span>3. RESUME / FOLLOW-UP DATE (REQUIRED):</span>
+                </label>
                 <Input
                   type="date"
+                  min={getTodayDate()}
                   required
                   value={holdResumeDate}
-                  onChange={(e) => setHoldResumeDate(e.target.value)}
+                  onChange={(e) => {
+                    setHoldResumeDate(e.target.value);
+                    if (holdErrors.date) {
+                      setHoldErrors((prev) => ({ ...prev, date: undefined }));
+                    }
+                  }}
+                  className={holdErrors.date ? 'input-error-danger' : ''}
                 />
+
+                {/* Field 4: Quick Date Shortcuts */}
                 <div className="quick-date-shortcuts">
                   <span>QUICK SHORTCUTS:</span>
-                  <button type="button" onClick={() => setHoldResumeDate(getOffsetDate(3))}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHoldResumeDate(getOffsetDate(3));
+                      setHoldErrors((prev) => ({ ...prev, date: undefined }));
+                    }}
+                  >
                     +3 DAYS
                   </button>
-                  <button type="button" onClick={() => setHoldResumeDate(getOffsetDate(7))}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHoldResumeDate(getOffsetDate(7));
+                      setHoldErrors((prev) => ({ ...prev, date: undefined }));
+                    }}
+                  >
                     +1 WEEK
                   </button>
-                  <button type="button" onClick={() => setHoldResumeDate(getOffsetDate(14))}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHoldResumeDate(getOffsetDate(14));
+                      setHoldErrors((prev) => ({ ...prev, date: undefined }));
+                    }}
+                  >
                     +2 WEEKS
                   </button>
-                  <button type="button" onClick={() => setHoldResumeDate(getOffsetDate(30))}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHoldResumeDate(getOffsetDate(30));
+                      setHoldErrors((prev) => ({ ...prev, date: undefined }));
+                    }}
+                  >
                     +1 MONTH
                   </button>
                 </div>
+
+                {holdErrors.date && (
+                  <div className="field-error-msg">{holdErrors.date}</div>
+                )}
               </div>
             </div>
 
+            {/* Modal Actions Footer: Always accessible at bottom */}
             <div className="modal-foot">
-              <Button type="button" onClick={cancelOnHold}>
+              <Button type="button" onClick={requestCloseHoldModal} disabled={isHoldSubmitting}>
                 CANCEL
               </Button>
               <Button
                 type="button"
                 variant="primary"
-                disabled={!holdResumeDate}
+                disabled={isHoldSubmitting}
                 onClick={confirmOnHold}
+                className="confirm-hold-btn"
               >
-                CONFIRM ON HOLD & SET RESUME DATE
+                {isHoldSubmitting ? 'SAVING...' : 'CONFIRM ON HOLD & SET RESUME DATE'}
               </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 2. DATE CHANGE POPUP MODAL */}
+      {/* =========================================================================
+          2. UNSAVED CHANGES CONFIRMATION MODAL (Poka-Yoke Guard)
+          ========================================================================= */}
+      {showUnsavedDiscardModal && (
+        <div className="modal-backdrop modal-backdrop-nested" onClick={() => setShowUnsavedDiscardModal(false)}>
+          <div className="modal-content poka-yoke-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow">UNSAVED CHANGES</span>
+                <h3>DISCARD HOLD SETUP?</h3>
+              </div>
+            </div>
+            <div className="modal-body">
+              <p className="poka-yoke-text">
+                You have modified the hold reason, notes, or resume date for{' '}
+                <strong>{onHoldModalLead?.name}</strong>. If you discard now, your changes will not be saved.
+              </p>
+            </div>
+            <div className="modal-foot">
+              <Button variant="primary" onClick={() => setShowUnsavedDiscardModal(false)}>
+                KEEP EDITING
+              </Button>
+              <Button onClick={discardAndCloseHoldModal} className="btn-destructive">
+                DISCARD & CLOSE
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          3. DATE CHANGE AUDIT MODAL
+          ========================================================================= */}
       {dateChangeModal && (
         <div className="modal-backdrop" onClick={() => setDateChangeModal(null)}>
           <div className="modal-content lead-popup-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <div>
-                <span className="eyebrow">AUDIT TRACKING</span>
+                <span className="eyebrow">AUDIT TRACKING • POKA-YOKE</span>
                 <h3>TRACK DATE CHANGE</h3>
+                <small className="modal-sub-lead">LEAD: {dateChangeModal.lead.name}</small>
               </div>
               <button
                 type="button"
@@ -905,7 +1486,7 @@ export function LeadsView({
               </div>
 
               <div className="modal-field-block">
-                <span className="eyebrow">WHY DID THE DATE CHANGE?</span>
+                <span className="eyebrow">WHY DID THE DATE CHANGE? (REQUIRED):</span>
                 <div className="chips-grid">
                   {dateChangeReasons.map((r) => (
                     <button
@@ -942,14 +1523,17 @@ export function LeadsView({
         </div>
       )}
 
-      {/* 3. CALL BOOKED MANDATORY DATE MODAL */}
+      {/* =========================================================================
+          4. CALL BOOKED MANDATORY DATE MODAL
+          ========================================================================= */}
       {callBookedModalLead && (
         <div className="modal-backdrop" onClick={() => setCallBookedModalLead(null)}>
           <div className="modal-content lead-popup-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <div>
-                <span className="eyebrow">MANDATORY FOLLOW-UP</span>
+                <span className="eyebrow">MANDATORY STEP • POKA-YOKE</span>
                 <h3>SET CALL BOOKED DATE</h3>
+                <small className="modal-sub-lead">LEAD: {callBookedModalLead.name}</small>
               </div>
               <button
                 type="button"
@@ -962,33 +1546,23 @@ export function LeadsView({
 
             <div className="modal-body">
               <p className="lead-popup-prompt">
-                Setting status to <strong>Call booked</strong> requires a confirmed call date for{' '}
-                <strong>{callBookedModalLead.name}</strong>.
+                To move <strong>{callBookedModalLead.name}</strong> to <strong>Call booked</strong>, you must set the scheduled date and time.
               </p>
 
               <div className="modal-field-block">
-                <span className="eyebrow">CALL / FOLLOW-UP DATE:</span>
+                <span className="eyebrow">SCHEDULED CALL DATE (REQUIRED):</span>
                 <Input
                   type="date"
+                  min={getTodayDate()}
                   required
                   value={callBookedDate}
-                  onChange={(e) => setCallBookedDate(e.target.value)}
+                  onChange={(e) => {
+                    setCallBookedDate(e.target.value);
+                    setCallBookedError('');
+                  }}
+                  className={callBookedError ? 'input-error-danger' : ''}
                 />
-                <div className="quick-date-shortcuts">
-                  <span>QUICK SHORTCUTS:</span>
-                  <button type="button" onClick={() => setCallBookedDate(getOffsetDate(1))}>
-                    TOMORROW
-                  </button>
-                  <button type="button" onClick={() => setCallBookedDate(getOffsetDate(2))}>
-                    +2 DAYS
-                  </button>
-                  <button type="button" onClick={() => setCallBookedDate(getOffsetDate(3))}>
-                    +3 DAYS
-                  </button>
-                  <button type="button" onClick={() => setCallBookedDate(getOffsetDate(7))}>
-                    NEXT WEEK
-                  </button>
-                </div>
+                {callBookedError && <div className="field-error-msg">{callBookedError}</div>}
               </div>
             </div>
 
@@ -996,20 +1570,68 @@ export function LeadsView({
               <Button type="button" onClick={() => setCallBookedModalLead(null)}>
                 CANCEL
               </Button>
-              <Button
-                type="button"
-                variant="primary"
-                disabled={!callBookedDate}
-                onClick={confirmCallBooked}
-              >
-                CONFIRM CALL & FOLLOW-UP DATE
+              <Button type="button" variant="primary" onClick={confirmCallBooked}>
+                CONFIRM CALL BOOKING
               </Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 4. ACTIVITY LOG & NOTES DRAWER / MODAL */}
+      {/* =========================================================================
+          5. DELETE LEAD POKA-YOKE CONFIRMATION MODAL
+          ========================================================================= */}
+      {leadToDelete && (
+        <div className="modal-backdrop" onClick={() => setLeadToDelete(null)}>
+          <div className="modal-content poka-yoke-dialog" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow" style={{ color: '#ef4444' }}>DESTRUCTIVE ACTION • POKA-YOKE</span>
+                <h3>PERMANENTLY DELETE LEAD?</h3>
+              </div>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setLeadToDelete(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p className="poka-yoke-text">
+                Are you sure you want to permanently delete lead <strong>"{leadToDelete.name}"</strong>?
+              </p>
+              <div className="poka-yoke-lead-details">
+                <div><span>Contact:</span> <strong>{leadToDelete.contact || 'None'}</strong></div>
+                <div><span>Service:</span> <strong>{leadToDelete.service || 'None'}</strong></div>
+                <div><span>Status:</span> <strong>{leadToDelete.status}</strong></div>
+              </div>
+              <div className="poka-yoke-warning-callout">
+                ⚠ This action is irreversible. All activity history and reminders associated with this lead will be permanently deleted.
+              </div>
+            </div>
+
+            <div className="modal-foot">
+              <Button type="button" onClick={() => setLeadToDelete(null)}>
+                CANCEL
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={confirmDeleteLead}
+                className="btn-destructive-confirm"
+              >
+                YES, PERMANENTLY DELETE
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          6. ACTIVITY LOG & AUDIT MODAL
+          ========================================================================= */}
       {activeActivityLead && (
         <div className="modal-backdrop" onClick={() => setActiveActivityLead(null)}>
           <div
@@ -1018,8 +1640,8 @@ export function LeadsView({
           >
             <div className="modal-head">
               <div>
-                <span className="eyebrow">AUDIT & ENGAGEMENT HISTORY</span>
-                <h3>ACTIVITY LOG: {activeActivityLead.name}</h3>
+                <span className="eyebrow">CHRONOLOGICAL AUDIT TIMELINE</span>
+                <h3>LEAD ACTIVITY LOG</h3>
               </div>
               <button
                 type="button"
@@ -1031,17 +1653,15 @@ export function LeadsView({
             </div>
 
             <div className="modal-body">
-              {/* Lead Summary Header Card */}
               <div className="activity-lead-summary">
                 <div>
+                  <span className="eyebrow">LEAD</span>
+                  <strong>{activeActivityLead.name}</strong>
+                </div>
+                <div>
                   <span className="eyebrow">STATUS</span>
-                  <strong
-                    style={{
-                      color:
-                        leadStatusConfig[activeActivityLead.status]?.color || '#fff',
-                    }}
-                  >
-                    {activeActivityLead.status.toUpperCase()}
+                  <strong style={{ color: leadStatusConfig[activeActivityLead.status]?.color }}>
+                    {activeActivityLead.status}
                   </strong>
                 </div>
                 <div>
@@ -1049,57 +1669,53 @@ export function LeadsView({
                   <strong>{activeActivityLead.owner || 'Unassigned'}</strong>
                 </div>
                 <div>
-                  <span className="eyebrow">BUDGET</span>
-                  <strong>{activeActivityLead.budget || 'TBD'}</strong>
-                </div>
-                <div>
-                  <span className="eyebrow">FOLLOW-UP</span>
+                  <span className="eyebrow">NEXT FOLLOW-UP</span>
                   <strong>{formatLeadDate(activeActivityLead.followUp)}</strong>
                 </div>
               </div>
 
-              {/* Add Note Form */}
+              {/* Form to append manual note to log */}
               <form onSubmit={handleAddManualNote} className="activity-note-form">
-                <span className="eyebrow">ADD LOG ENTRY / CALL NOTE</span>
+                <span className="eyebrow">+ LOG NEW NOTE / CLIENT UPDATE:</span>
                 <div className="note-input-row">
                   <Input
+                    placeholder="Type client update, phone call notes, budget revisions..."
                     value={newActivityNote}
-                    placeholder="Enter call notes, client response, budget discussion, or next steps..."
                     onChange={(e) => setNewActivityNote(e.target.value)}
                   />
                   <Button type="submit" variant="primary" disabled={!newActivityNote.trim()}>
-                    + LOG NOTE
+                    ADD NOTE
                   </Button>
                 </div>
               </form>
 
-              {/* Timeline Stream */}
-              <div className="activity-timeline-stream">
-                <span className="eyebrow" style={{ marginBottom: '0.5rem' }}>
-                  CHRONOLOGICAL TIMELINE ({activeActivityLead.activityLog?.length || 0} ENTRIES)
-                </span>
-
+              {/* Chronological Timeline */}
+              <div className="activity-timeline-feed">
                 {activeActivityLead.activityLog && activeActivityLead.activityLog.length > 0 ? (
-                  <div className="timeline-items">
-                    {activeActivityLead.activityLog.map((act) => (
-                      <div key={act.id} className="timeline-item">
-                        <div className="timeline-item-avatar">
-                          {act.author ? act.author.slice(0, 2).toUpperCase() : 'SYS'}
+                  activeActivityLead.activityLog.map((act) => (
+                    <div key={act.id} className={`timeline-entry timeline-type-${act.type || 'status'}`}>
+                      <div className="timeline-marker" />
+                      <div className="timeline-content">
+                        <div className="timeline-meta">
+                          <strong className="timeline-author">{act.author}</strong>
+                          <span className="timeline-time">
+                            {new Date(act.timestamp).toLocaleDateString([], {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </span>
                         </div>
-                        <div className="timeline-item-content">
-                          <div className="timeline-item-meta">
-                            <strong>{act.author || 'Team Member'}</strong>
-                            <small>{new Date(act.timestamp).toLocaleString('en-GB')}</small>
-                          </div>
-                          <p className="timeline-item-action">{act.action}</p>
-                        </div>
+                        <p className="timeline-action-text">{act.action}</p>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))
                 ) : (
-                  <p className="muted" style={{ padding: '1rem', textAlign: 'center' }}>
-                    No activity recorded yet for this lead.
-                  </p>
+                  <div className="timeline-empty">
+                    <p>No activity recorded yet for this lead.</p>
+                  </div>
                 )}
               </div>
             </div>
