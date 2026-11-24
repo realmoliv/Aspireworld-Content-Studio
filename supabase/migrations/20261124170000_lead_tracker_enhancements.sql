@@ -19,13 +19,16 @@ ALTER TABLE public.leads ADD CONSTRAINT leads_status_check
     'Wrong data'
   ));
 
--- 2. Add new columns for lead tracking
+-- 2. Relax owner_id not-null requirement so leads can be assigned flexibly
+ALTER TABLE public.leads ALTER COLUMN owner_id DROP NOT NULL;
+
+-- 3. Add new columns for lead tracking
 ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS activity_log JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS hold_reason TEXT;
 ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS resume_date DATE;
 ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS owner_name TEXT;
 
--- 3. Update comments on columns
+-- 4. Update comments on columns
 COMMENT ON COLUMN public.leads.activity_log IS 'Chronological audit and activity entries for this lead';
 COMMENT ON COLUMN public.leads.hold_reason IS 'Reason if status is On hold (budget, timing, thinking)';
 COMMENT ON COLUMN public.leads.resume_date IS 'Target resume date when lead is On hold';

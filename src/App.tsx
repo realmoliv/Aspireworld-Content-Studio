@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { useContentStudio } from '@/hooks/useContentStudio';
+import { useContentStudio, getLeadMetaCache } from '@/hooks/useContentStudio';
 import { useTheme } from '@/hooks/useTheme';
 import { AuthView } from '@/components/AuthView';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -44,10 +44,23 @@ function ContentStudioApp() {
   const [localLeads, setLocalLeads] = useState<Lead[]>(() => {
     try {
       const stored = localStorage.getItem('aspire-leads');
+      const metaCache = getLeadMetaCache();
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) {
-          return parsed.filter((l: any) => !['l1', 'l2', 'l3', 'l4'].includes(l.id) && l.name !== 'Aarav Mehta' && l.name !== 'Studio North' && l.name !== 'Maya Rao' && l.name !== 'Rhyme House');
+          return parsed
+            .filter((l: any) => !['l1', 'l2', 'l3', 'l4'].includes(l.id) && l.name !== 'Aarav Mehta' && l.name !== 'Studio North' && l.name !== 'Maya Rao' && l.name !== 'Rhyme House')
+            .map((l: any) => {
+              const meta = metaCache[l.id] || {};
+              return {
+                ...l,
+                owner: l.owner || meta.owner || '',
+                ownerId: l.ownerId || meta.ownerId || null,
+                holdReason: l.holdReason || meta.holdReason || '',
+                resumeDate: l.resumeDate || meta.resumeDate || '',
+                activityLog: l.activityLog?.length ? l.activityLog : (meta.activityLog || []),
+              };
+            });
         }
       }
       return [];
@@ -89,6 +102,13 @@ function ContentStudioApp() {
   const isConnected = isSupabaseConfigured && Boolean(user) && !studio.dbTablesMissing;
   const items = isConnected && studio.isLoaded ? studio.items : localItems;
   const leads = isConnected && studio.isLoaded && !studio.dbTablesMissing ? studio.leads : localLeads;
+
+  // Keep local leads in sync when cloud leads are loaded
+  useEffect(() => {
+    if (isConnected && studio.isLoaded && studio.leads.length > 0) {
+      setLocalLeads(studio.leads);
+    }
+  }, [isConnected, studio.isLoaded, studio.leads]);
 
   // Sync selectedId with route parameter if present
   useEffect(() => {

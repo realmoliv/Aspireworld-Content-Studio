@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { uploadAssetFile, deleteAssetFile, getSignedAssetUrl, formatFileSize } from '@/lib/storage';
-import { getChecklistForType } from '@/constants';
+import { getChecklistForType, defaultTeamMembers } from '@/constants';
 import type { Database } from '@/lib/database.types';
 import type { TeamMember, Lead, LeadActivity } from '@/types';
 
@@ -118,10 +118,34 @@ export const defaultChecklist = [
   'Caption proofread',
 ];
 
+const LEAD_META_STORAGE_KEY = 'aspire-leads-metadata';
+
+export function getLeadMetaCache(): Record<string, Partial<Lead>> {
+  try {
+    const raw = localStorage.getItem(LEAD_META_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveLeadMetaCache(leadId: string, meta: Partial<Lead>) {
+  try {
+    const current = getLeadMetaCache();
+    current[leadId] = {
+      ...(current[leadId] || {}),
+      ...meta,
+    };
+    localStorage.setItem(LEAD_META_STORAGE_KEY, JSON.stringify(current));
+  } catch {
+    // Ignored
+  }
+}
+
 export function useContentStudio(userId?: string) {
   const [items, setItems] = useState<Item[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
-  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>(defaultTeamMembers);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dbTablesMissing, setDbTablesMissing] = useState(false);
@@ -144,14 +168,22 @@ export function useContentStudio(userId?: string) {
         return;
       }
 
-      setTeamMembers(
-        (data || []).map((p: any) => ({
-          id: p.id,
-          full_name: p.full_name,
-          role: p.role || 'editor',
-          avatar_initials: p.avatar_initials || '',
-        }))
-      );
+      const dbMembers = (data || []).map((p: any) => ({
+        id: p.id,
+        full_name: p.full_name,
+        role: p.role || 'editor',
+        avatar_initials: p.avatar_initials || '',
+      }));
+
+      // Combine with default team members so core members (Akshay, Avani, Sanchit) are always present
+      const combined = [...dbMembers];
+      for (const def of defaultTeamMembers) {
+        if (!combined.some((m) => m.full_name.toLowerCase().includes(def.full_name.toLowerCase().split(' ')[0]))) {
+          combined.push(def);
+        }
+      }
+
+      setTeamMembers(combined);
     } catch (e) {
       console.error('Failed to fetch team members:', e);
     }
@@ -276,28 +308,42 @@ export function useContentStudio(userId?: string) {
         throw err;
       }
 
+      const metaCache = getLeadMetaCache();
+
       setLeads(
-        (data || []).map((l: any) => ({
-          id: l.id,
-          date: l.lead_date,
-          source: l.source,
-          name: l.name,
-          contact: l.contact || '',
-          service: l.service || '',
-          budget: l.budget || '',
-          status: l.status,
-          followUp: l.follow_up || '',
-          owner: l.owner_name || '',
-          ownerId: l.owner_id || null,
-          holdReason: l.hold_reason || '',
-          resumeDate: l.resume_date || '',
-          activityLog: Array.isArray(l.activity_log) ? l.activity_log : [],
-        }))
+        (data || []).map((l: any) => {
+          const cached = metaCache[l.id] || {};
+          const matchedProfile = l.owner_id ? teamMembers.find((m) => m.id === l.owner_id) : null;
+          const resolvedOwner =
+            l.owner_name ||
+            cached.owner ||
+            matchedProfile?.full_name ||
+            '';
+
+          return {
+            id: l.id,
+            date: l.lead_date,
+            source: l.source,
+            name: l.name,
+            contact: l.contact || '',
+            service: l.service || '',
+            budget: l.budget || '',
+            status: l.status,
+            followUp: l.follow_up || '',
+            owner: resolvedOwner,
+            ownerId: l.owner_id || cached.ownerId || matchedProfile?.id || null,
+            holdReason: l.hold_reason || cached.holdReason || '',
+            resumeDate: l.resume_date || cached.resumeDate || '',
+            activityLog: Array.isArray(l.activity_log) && l.activity_log.length > 0
+              ? l.activity_log
+              : (cached.activityLog || []),
+          };
+        })
       );
     } catch (e: any) {
       console.error('Failed to fetch leads:', e);
     }
-  }, []);
+  }, [teamMembers]);
 
   // Initial load
   useEffect(() => {
@@ -632,9 +678,22 @@ export function useContentStudio(userId?: string) {
   };
 
   const updateLead = async (leadId: string, patch: Partial<Lead>) => {
+    // 1. Immediately cache extended lead metadata locally
+    saveLeadMetaCache(leadId, {
+      ...(patch.owner !== undefined && { owner: patch.owner }),
+      ...(patch.ownerId !== undefined && { ownerId: patch.ownerId }),
+      ...(patch.holdReason !== undefined && { holdReason: patch.holdReason }),
+      ...(patch.resumeDate !== undefined && { resumeDate: patch.resumeDate }),
+      ...(patch.activityLog !== undefined && { activityLog: patch.activityLog }),
+    });
+
+    // 2. Optimistic UI update
     setLeads((curr) => curr.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
 
     if (!isSupabaseConfigured) return;
+
+    const isUUID = (val?: string | null) =>
+      Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
 
     const dbPatch: any = {};
     if (patch.date !== undefined) dbPatch.lead_date = patch.date;
@@ -646,7 +705,7 @@ export function useContentStudio(userId?: string) {
     if (patch.status !== undefined) dbPatch.status = patch.status;
     if (patch.followUp !== undefined) dbPatch.follow_up = patch.followUp || null;
     if (patch.owner !== undefined) dbPatch.owner_name = patch.owner;
-    if (patch.ownerId !== undefined) dbPatch.owner_id = patch.ownerId || null;
+    if (isUUID(patch.ownerId)) dbPatch.owner_id = patch.ownerId;
     if (patch.holdReason !== undefined) dbPatch.hold_reason = patch.holdReason;
     if (patch.resumeDate !== undefined) dbPatch.resume_date = patch.resumeDate || null;
     if (patch.activityLog !== undefined) dbPatch.activity_log = patch.activityLog;
@@ -665,6 +724,7 @@ export function useContentStudio(userId?: string) {
           if (patch.budget !== undefined) basicPatch.budget = patch.budget;
           if (patch.status !== undefined) basicPatch.status = patch.status;
           if (patch.followUp !== undefined) basicPatch.follow_up = patch.followUp || null;
+          if (isUUID(patch.ownerId)) basicPatch.owner_id = patch.ownerId;
           await supabase.from('leads').update(basicPatch).eq('id', leadId);
         } else {
           console.error('Error updating lead in Supabase:', error);
@@ -676,6 +736,9 @@ export function useContentStudio(userId?: string) {
   };
 
   const addLead = async () => {
+    const isUUID = (val?: string | null) =>
+      Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+
     const newLead: Lead = {
       id: `l${Date.now()}`,
       date: new Date().toISOString().slice(0, 10),
@@ -687,7 +750,7 @@ export function useContentStudio(userId?: string) {
       status: 'New',
       followUp: '',
       owner: '',
-      ownerId: userId || null,
+      ownerId: isUUID(userId) ? userId : null,
       holdReason: '',
       resumeDate: '',
       activityLog: [
@@ -700,6 +763,14 @@ export function useContentStudio(userId?: string) {
         },
       ],
     };
+
+    saveLeadMetaCache(newLead.id, {
+      owner: newLead.owner,
+      ownerId: newLead.ownerId,
+      holdReason: newLead.holdReason,
+      resumeDate: newLead.resumeDate,
+      activityLog: newLead.activityLog,
+    });
 
     setLeads((curr) => [...curr, newLead]);
 
@@ -745,6 +816,13 @@ export function useContentStudio(userId?: string) {
 
       if (data) {
         newLead.id = data.id;
+        saveLeadMetaCache(data.id, {
+          owner: newLead.owner,
+          ownerId: newLead.ownerId,
+          holdReason: newLead.holdReason,
+          resumeDate: newLead.resumeDate,
+          activityLog: newLead.activityLog,
+        });
         setLeads((curr) =>
           curr.map((l) => (l.id === newLead.id ? { ...l, id: data.id } : l))
         );

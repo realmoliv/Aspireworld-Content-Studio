@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { Lead, TeamMember, LeadActivity } from '@/types';
 import { SectionTitle, Button, Input, Select, Pill } from '@/components/ui';
 import {
@@ -8,6 +8,7 @@ import {
   dateChangeReasons,
   leadStatusConfig,
   getUserTitleCaseDesignation,
+  defaultTeamMembers,
 } from '@/constants';
 
 interface LeadsViewProps {
@@ -97,6 +98,27 @@ export function LeadsView({
   const [ownerFilter, setOwnerFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [queueTab, setQueueTab] = useState<'all' | 'overdue' | 'today' | 'upcoming'>('all');
+
+  const effectiveTeamMembers = useMemo(() => {
+    const list = [...(teamMembers || [])];
+    for (const def of defaultTeamMembers) {
+      if (!list.some((m) => m.full_name.toLowerCase().includes(def.full_name.toLowerCase().split(' ')[0]))) {
+        list.push(def);
+      }
+    }
+    return list;
+  }, [teamMembers]);
+
+  const getSelectedOwnerValue = (owner?: string) => {
+    if (!owner) return '';
+    const match = effectiveTeamMembers.find(
+      (m) =>
+        m.full_name.toLowerCase() === owner.toLowerCase() ||
+        m.full_name.toLowerCase().startsWith(owner.toLowerCase()) ||
+        owner.toLowerCase().startsWith(m.full_name.toLowerCase().split(' ')[0])
+    );
+    return match ? match.full_name : owner;
+  };
 
   const add = () => {
     if (onAddLead) {
@@ -260,6 +282,9 @@ export function LeadsView({
     const actionText = `${currentUser} assigned lead to ${newOwner || 'Unassigned'}`;
     const newLog = logActivity(lead, actionText, 'owner');
     update(lead.id, { owner: newOwner, ownerId: newOwnerId, activityLog: newLog });
+    if (setToast) {
+      setToast(newOwner ? `Lead assigned to ${newOwner}.` : 'Lead marked unassigned.');
+    }
   };
 
   // Add Manual Activity Note
@@ -300,7 +325,8 @@ export function LeadsView({
   // Table filtering
   const filteredLeads = leads.filter((l) => {
     if (statusFilter !== 'ALL' && l.status !== statusFilter) return false;
-    if (ownerFilter !== 'ALL' && (l.owner || 'Unassigned') !== ownerFilter) return false;
+    const resolvedOwner = getSelectedOwnerValue(l.owner) || 'Unassigned';
+    if (ownerFilter !== 'ALL' && resolvedOwner !== ownerFilter) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       const match =
@@ -309,6 +335,7 @@ export function LeadsView({
         l.service.toLowerCase().includes(q) ||
         l.budget.toLowerCase().includes(q) ||
         (l.owner && l.owner.toLowerCase().includes(q)) ||
+        resolvedOwner.toLowerCase().includes(q) ||
         (l.holdReason && l.holdReason.toLowerCase().includes(q));
       if (!match) return false;
     }
@@ -507,7 +534,7 @@ export function LeadsView({
             <Select value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}>
               <option value="ALL">All Owners</option>
               <option value="Unassigned">Unassigned</option>
-              {teamMembers.map((m) => (
+              {effectiveTeamMembers.map((m) => (
                 <option key={m.id} value={m.full_name}>
                   {m.full_name}
                 </option>
@@ -647,19 +674,22 @@ export function LeadsView({
                   {/* OWNER */}
                   <td>
                     <Select
-                      value={l.owner || ''}
+                      value={getSelectedOwnerValue(l.owner)}
                       onChange={(e) => {
                         const val = e.target.value;
-                        const member = teamMembers.find((m) => m.full_name === val);
+                        const member = effectiveTeamMembers.find((m) => m.full_name === val);
                         handleOwnerChange(l, val, member?.id || null);
                       }}
                     >
                       <option value="">Unassigned</option>
-                      {teamMembers.map((m) => (
+                      {effectiveTeamMembers.map((m) => (
                         <option key={m.id} value={m.full_name}>
                           {m.full_name} ({getUserTitleCaseDesignation(m.full_name, m.role)})
                         </option>
                       ))}
+                      {l.owner && !effectiveTeamMembers.some((m) => m.full_name === getSelectedOwnerValue(l.owner)) && (
+                        <option value={l.owner}>{l.owner}</option>
+                      )}
                     </Select>
                   </td>
 

@@ -1,4 +1,10 @@
-import type { Status, Pillar, ContentType, Item, Lead, ReferenceItem } from '@/types';
+import type { Status, Pillar, ContentType, Item, Lead, ReferenceItem, TeamMember } from '@/types';
+
+export const defaultTeamMembers: TeamMember[] = [
+  { id: 'tm_akshay', full_name: 'Akshay Kumar', role: 'admin', avatar_initials: 'AK' },
+  { id: 'tm_avani', full_name: 'Avani', role: 'editor', avatar_initials: 'AV' },
+  { id: 'tm_sanchit', full_name: 'Sanchit', role: 'editor', avatar_initials: 'SC' },
+];
 
 export const statuses: Status[] = [
   'Idea',
