@@ -722,12 +722,12 @@ export function LeadsView({
         <table className="leads-table-refactored">
           <thead>
             <tr>
-              <th style={{ width: '25%' }}>LEAD & CONTACT</th>
-              <th style={{ width: '18%' }}>STATUS & HOLD</th>
-              <th style={{ width: '18%' }}>SERVICE & VALUE</th>
-              <th style={{ width: '16%' }}>OWNER</th>
-              <th style={{ width: '15%' }}>FOLLOW-UP & URGENCY</th>
-              <th style={{ width: '8%', textAlign: 'right' }}>ACTIONS</th>
+              <th style={{ minWidth: '180px' }}>LEAD & CONTACT</th>
+              <th style={{ width: '16%' }}>STATUS & HOLD</th>
+              <th style={{ width: '17%' }}>SERVICE & VALUE</th>
+              <th style={{ width: '15%' }}>OWNER</th>
+              <th style={{ width: '16%' }}>FOLLOW-UP & URGENCY</th>
+              <th className="th-actions" style={{ width: '140px', minWidth: '140px', textAlign: 'center' }}>ACTIONS</th>
             </tr>
           </thead>
           <tbody>
@@ -888,29 +888,33 @@ export function LeadsView({
                     </td>
 
                     {/* 6. ACTIONS (Expand, History, Delete) */}
-                    <td>
-                      <div className="row-action-buttons">
+                    <td className="actions-cell-td">
+                      <div className="actions-cell">
                         <button
                           type="button"
-                          className={`action-icon-btn ${isExpanded ? 'active' : ''}`}
+                          className={`action-btn action-btn-expand ${isExpanded ? 'active' : ''}`}
                           onClick={() => toggleRowExpanded(l.id)}
                           title={isExpanded ? 'Collapse row details' : 'Expand full details'}
+                          aria-label="Toggle details"
                         >
                           {isExpanded ? '▲' : '▼'}
                         </button>
                         <button
                           type="button"
-                          className="action-icon-btn"
+                          className="action-btn action-btn-history"
                           onClick={() => setActiveActivityLead(l)}
-                          title="View activity log"
+                          title={`View activity logs (${l.activityLog?.length || 0})`}
+                          aria-label="View activity logs"
                         >
-                          📝 <small>{l.activityLog?.length || 0}</small>
+                          <span className="act-icon">📝</span>
+                          <span className="act-count">{l.activityLog?.length || 0}</span>
                         </button>
                         <button
                           type="button"
-                          className="action-icon-btn del-btn"
+                          className="action-btn action-btn-delete"
                           onClick={() => setLeadToDelete(l)}
                           title="Delete lead (Poka-Yoke confirmation)"
+                          aria-label="Delete lead"
                         >
                           ✕
                         </button>
@@ -1130,55 +1134,59 @@ export function LeadsView({
 
               {/* Mobile Card Action Buttons (Min 44px touch targets) */}
               <div className="mobile-card-actions-bar">
-                <div className="mobile-status-dropdown-wrap">
-                  <Select
-                    value={l.status}
-                    onChange={(e) => handleStatusChange(l, e.target.value)}
-                    className="mobile-status-select"
+                <div className="mobile-actions-row-primary">
+                  <div className="mobile-status-dropdown-wrap">
+                    <Select
+                      value={l.status}
+                      onChange={(e) => handleStatusChange(l, e.target.value)}
+                      className="mobile-status-select"
+                    >
+                      {leadStatuses.map((st) => (
+                        <option key={st} value={st}>
+                          {st}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  <button
+                    type="button"
+                    className="mobile-touch-btn mobile-hold-btn"
+                    onClick={() => openHoldModal(l)}
+                    title="Configure Hold"
                   >
-                    {leadStatuses.map((st) => (
-                      <option key={st} value={st}>
-                        {st}
-                      </option>
-                    ))}
-                  </Select>
+                    ⏸ HOLD
+                  </button>
                 </div>
 
-                <button
-                  type="button"
-                  className="mobile-touch-btn"
-                  onClick={() => openHoldModal(l)}
-                  title="Configure Hold"
-                >
-                  ⏸ HOLD
-                </button>
+                <div className="mobile-actions-row-secondary">
+                  <button
+                    type="button"
+                    className="mobile-touch-btn"
+                    onClick={() => setActiveActivityLead(l)}
+                    title="View Activity Logs"
+                  >
+                    📝 LOGS ({l.activityLog?.length || 0})
+                  </button>
 
-                <button
-                  type="button"
-                  className="mobile-touch-btn"
-                  onClick={() => setActiveActivityLead(l)}
-                  title="View Activity Logs"
-                >
-                  📜 {l.activityLog?.length || 0}
-                </button>
+                  <button
+                    type="button"
+                    className="mobile-touch-btn"
+                    onClick={() => toggleRowExpanded(l.id)}
+                    title="Toggle details"
+                  >
+                    {isExpanded ? '▲ LESS' : '▼ DETAILS'}
+                  </button>
 
-                <button
-                  type="button"
-                  className="mobile-touch-btn"
-                  onClick={() => toggleRowExpanded(l.id)}
-                  title="Toggle details"
-                >
-                  {isExpanded ? '▲' : '▼ DETAILS'}
-                </button>
-
-                <button
-                  type="button"
-                  className="mobile-touch-btn mobile-del-btn"
-                  onClick={() => setLeadToDelete(l)}
-                  title="Delete lead"
-                >
-                  ✕
-                </button>
+                  <button
+                    type="button"
+                    className="mobile-touch-btn mobile-del-btn"
+                    onClick={() => setLeadToDelete(l)}
+                    title="Delete lead"
+                  >
+                    ✕ DELETE
+                  </button>
+                </div>
               </div>
 
               {/* Mobile Card Expanded Details */}
