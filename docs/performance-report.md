@@ -78,6 +78,35 @@ Command: `node tests/perf/typing-latency-harness.mjs baseline` (Exit `0`, mock S
 
 ---
 
-## 5. Planned Fix Architecture & Post-Fix Results
+## 5. Implemented Fix & Measured AFTER Results
 
-*(To be completed in Commit 2 after implementing the local-first debounced save fix and re-running `node tests/perf/typing-latency-harness.mjs verify-fix`.)*
+### Summary of Changes (No Schema / Migration Changes)
+1. **Eliminated Infinite Refetch Loop & Added Coalescing + Echo Protection ([useContentStudio.ts](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/hooks/useContentStudio.ts)):**
+   - Moved `teamMembers` lookup in `fetchLeads` onto `teamMembersRef`, breaking the `fetchTeamMembers -> setTeamMembers -> fetchLeads -> loadAll` infinite refetch loop (`18–54` continuous background `GET`s per typing burst -> `0`).
+   - Added per-record write coalescing queues (`itemWriteQueueRef`, `leadWriteQueueRef`) so at most `1` write per entity ID is in flight at once, intermediate updates batch cleanly, write errors propagate (`throw`), child row updates run via `Promise.all`, and `fetchItems` / `fetchLeads` ignore server echoes while local saves are active or within a `2.5s` echo window.
+2. **Local-First Drafts, `600 ms` Debounced Save & Multi-Trigger Flush ([useDebouncedSave.ts](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/hooks/useDebouncedSave.ts), [DetailDrawer.tsx](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/views/DetailDrawer.tsx), [LeadsView.tsx](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/views/LeadsView.tsx)):**
+   - Added shared `useEntityDraft` hook with immediate local `draft` state, dirty-field echo protection, `600 ms` debounced batched saves, immediate flush on `blur`, `close`, item switch, navigation/unmount, and `beforeunload`, plus `Unsaved…` / `Saving…` / `Saved` / `Save failed + Retry` UI indicators (preserving all local text on failed saves).
+   - Isolated lead row editing into `React.memo(LeadQuickEditDesktop)` / `React.memo(LeadQuickEditMobile)` and memoized `LeadsView` queue & filtered derivations (`useMemo`).
+3. **Render Isolation & Deferred Embed Previews ([App.tsx](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/App.tsx), [ReferenceView.tsx](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/views/ReferenceView.tsx), [CalendarView.tsx](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/views/CalendarView.tsx), [BoardView.tsx](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/views/BoardView.tsx), [AppLayout.tsx](file:///c:/Users/kumar/OneDrive/Desktop/AW-update/Aspire%20World%20Content%20Studio/src/components/layout/AppLayout.tsx)):**
+   - Moved Reference Library `search` state out of `App.tsx` into `ReferenceView`, memoized parent routes/layout (`React.memo` + `useCallback`), skipped redundant `localStorage` serialization while connected to Supabase, cleared `selectedId` on route leave so navigation flushes & closes the drawer, and deferred URL embed parsing (`useDeferredValue`).
+
+### Measured BEFORE vs AFTER (`tests/perf/typing-latency-harness.mjs verify-fix`, Exit `0`)
+
+Note: During verification, `typing-latency-harness.mjs` Fiber tracking was tightened (`actualStartTime` + `PerformedWork`) so untouched ancestor/sibling subtrees are not falsely credited with descendant `actualDuration`. Under `verify-fix`:
+
+| Scenario (Keystrokes) | Mean / p95 Frame (ms) Before -> After | Writes During / After (Before -> After) | Reads During / After (Before -> After) | Parent `ContentStudioApp` Renders (Before -> After) | Focused Component Renders After | Text Intact? (Before -> After) |
+|---|---|---|---|---|---|---|
+| `detailTitle` (19) | 27.63 / 76.63 -> **22.96 / 37.16** | 19/19 -> **0/1** | 18/42 -> **0/0** | 32 -> **1** (open) | `DetailDrawer`: 20 | NO -> **YES** |
+| `detailBrief` (22) | 22.07 / 35.23 -> **18.59 / 32.93** | 22/22 -> **0/1** | 18/45 -> **0/0** | 35 -> **0** | `DetailDrawer`: 22 | NO -> **YES** |
+| `detailCaption` (28) | 28.85 / 76.98 -> **16.56 / 19.11** | 28/28 -> **0/1** | 27/54 -> **0/0** | 45 -> **0** | `DetailDrawer`: 28 | NO -> **YES** |
+| `detailShotVisual` (21) | 27.67 / 55.17 -> **16.80 / 18.00** | 45/84 -> **0/4** | 15/33 -> **0/0** | 56 -> **0** | `DetailDrawer`: 21 | NO -> **YES** |
+| `detailRefLabel` (14) | 23.35 / 36.56 -> **18.01 / 33.42** | 28/42 -> **0/3** | 10/30 -> **0/0** | 18 -> **0** | `DetailDrawer`: 14 | YES -> **YES** |
+| `detailComment` (21) | 20.21 / 33.56 -> **16.71 / 18.05** | 0/0 -> **0/0** | 15/39 -> **0/0** | 33 -> **0** | `DetailDrawer`: 21 | YES -> **YES** |
+| `leadsRowName` (11) | 71.80 / 308.79 -> **19.01 / 35.02** | 11/11 -> **0/1** | 18/36 -> **0/0** | 37 -> **0** (`LeadsView`: 0) | `LeadQuickEditDesktop`: 11 | NO -> **YES** |
+| `referenceSearch` (19) | 18.83 / 32.83 -> **16.62 / 18.27** | 0/0 -> **0/0** | 15/42 -> **0/0** | 28 -> **0** | `ReferenceView`: 19 | YES -> **YES** |
+
+### Behavioral Durability Checks (`verify-fix`)
+- **Quick Close Flush:** Typing `' QUICKCLOSE'` and closing drawer before `600 ms` -> `reqsBeforeClose = 0`, `reqsAfterClose = 1`, `savedTitleEndsWithQuickClose = true`.
+- **Navigation Flush:** Typing `' NAVFLUSH'` and clicking sidebar `Lead tracker` -> `reqsBeforeNav = 0`, `reqsAfterNav = 1`, `savedTitleEndsWithNavFlush = true`.
+- **Failed Save Durability (`500` injection):** Drawer displays `Save failed ... Retry` (`errorStatusVisible = true`), retains local textarea draft (`textPreservedOnError = true`), and persists cleanly when clicking `Retry` (`recoveredBriefSaved = true`).
+

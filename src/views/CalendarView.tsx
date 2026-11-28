@@ -18,7 +18,7 @@ interface CalendarViewProps {
   teamMembers?: TeamMember[];
 }
 
-export function CalendarView({
+export const CalendarView = React.memo(function CalendarView({
   items,
   month,
   setMonth,
@@ -194,4 +194,4 @@ export function CalendarView({
       )}
     </>
   );
-}
+});

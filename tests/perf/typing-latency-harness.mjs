@@ -313,12 +313,21 @@ const HOOK_SCRIPT = `
     return null;
   }
 
+  const lastFiberStartTime = new WeakMap();
+
   function recordRenderedComponents(fiber) {
     if (!fiber) return;
     const name = getComponentName(fiber.type);
     const flags = fiber.flags || 0;
-    const didRender = (flags & 1) !== 0 || fiber.alternate === null || (fiber.actualDuration > 0);
-    if (name && didRender && (fiber.tag === 0 || fiber.tag === 1 || fiber.tag === 11 || fiber.tag === 14 || fiber.tag === 15)) {
+    const startTime = fiber.actualStartTime;
+    const prevStartTime = lastFiberStartTime.get(fiber);
+    const ranThisCommit =
+      fiber.alternate === null ||
+      (typeof startTime === 'number' && startTime > 0 && startTime !== prevStartTime && (flags & 1) !== 0);
+    if (typeof startTime === 'number' && startTime > 0) {
+      lastFiberStartTime.set(fiber, startTime);
+    }
+    if (name && ranThisCommit && (fiber.tag === 0 || fiber.tag === 1 || fiber.tag === 11 || fiber.tag === 14 || fiber.tag === 15)) {
       const stats = window.__PERF_STATS__;
       stats.rendersByComponent[name] = (stats.rendersByComponent[name] || 0) + 1;
       stats.renderDurationsByComponent[name] = (stats.renderDurationsByComponent[name] || 0) + (fiber.selfBaseDuration || 0);
@@ -496,6 +505,7 @@ async function main() {
           CalendarView: perf.renders.CalendarView || 0,
           DetailDrawer: perf.renders.DetailDrawer || 0,
           LeadsView: perf.renders.LeadsView || 0,
+          LeadQuickEditDesktop: perf.renders.LeadQuickEditDesktop || 0,
           ReferenceView: perf.renders.ReferenceView || 0,
         },
         valueTail: valueAfterTyping.slice(-30),
@@ -566,8 +576,8 @@ async function main() {
     // Behavioral checks when mode === 'verify-fix'
     const behavioral = {};
     if (mode === 'verify-fix') {
-      // A. Blur/close flush + failed save keeps text and shows error
-      await cdp.eval(`Array.from(document.querySelectorAll('aside.sidebar nav button')).find(b => b.textContent.toLowerCase().includes('calendar')).click()`);
+      // A. Quick close flush + navigation flush + failed save keeps text and shows error
+      await cdp.eval(`Array.from(document.querySelectorAll('aside.sidebar nav button')).find(b => b.textContent.toLowerCase().includes('month')).click()`);
       await waitFor(() => cdp.eval(`Boolean(document.querySelector('.calendar-item'))`));
       await cdp.eval(`document.querySelector('.calendar-item').click()`);
       await waitFor(() => cdp.eval(`Boolean(document.querySelector('aside.drawer'))`));
@@ -629,7 +639,31 @@ async function main() {
       behavioral.failedSaveDurability = {
         errorStatusVisible,
         textPreservedOnError,
-        recoveredTitleSaved: mock.db.items[0].brief.endsWith('FAILTEST'),
+        recoveredBriefSaved: mock.db.items[0].brief.endsWith('FAILTEST'),
+      };
+
+      // C. Navigation flush: type into Title while drawer is open and navigate straight to /leads without clicking Close
+      mock.clearRequests();
+      await cdp.eval(`
+        (() => {
+          const el = document.querySelector('aside.drawer .form-grid input.input');
+          el.focus();
+          el.setSelectionRange && el.setSelectionRange(el.value.length, el.value.length);
+        })()
+      `);
+      for (const ch of ' NAVFLUSH') {
+        await cdp.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: ch });
+        await cdp.send('Input.dispatchKeyEvent', { type: 'char', text: ch });
+        await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch });
+      }
+      const reqsBeforeNav = mock.requests.filter((r) => r.method === 'PATCH').length;
+      await cdp.eval(`Array.from(document.querySelectorAll('aside.sidebar nav button')).find(b => b.textContent.toLowerCase().includes('lead')).click()`);
+      await new Promise((r) => setTimeout(r, 250));
+      const reqsAfterNav = mock.requests.filter((r) => r.method === 'PATCH').length;
+      behavioral.navigationFlush = {
+        reqsBeforeNav,
+        reqsAfterNav,
+        savedTitleEndsWithNavFlush: mock.db.items[0].title.endsWith('NAVFLUSH'),
       };
     }
 

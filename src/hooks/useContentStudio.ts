@@ -1,9 +1,13 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { uploadAssetFile, deleteAssetFile, getSignedAssetUrl, formatFileSize } from '@/lib/storage';
 import { getChecklistForType, defaultTeamMembers } from '@/constants';
 import type { Database } from '@/lib/database.types';
 import type { TeamMember, Lead, LeadActivity } from '@/types';
+
+export type ItemPatch = Partial<Omit<Item, 'copy'>> & {
+  copy?: Partial<Item['copy']>;
+};
 
 export type Screen = 'calendar' | 'board' | 'references' | 'templates' | 'planner' | 'leads';
 export type Status =
@@ -151,6 +155,31 @@ export function useContentStudio(userId?: string) {
   const [dbTablesMissing, setDbTablesMissing] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
 
+  const teamMembersRef = useRef<TeamMember[]>(defaultTeamMembers);
+  // Coalescing queues & echo-guard timestamps per entity ID
+  const itemWriteQueueRef = useRef<
+    Map<
+      string,
+      {
+        inFlight: boolean;
+        queuedPatch: ItemPatch | null;
+        waiters: Array<{ resolve: () => void; reject: (err: unknown) => void }>;
+      }
+    >
+  >(new Map());
+  const leadWriteQueueRef = useRef<
+    Map<
+      string,
+      {
+        inFlight: boolean;
+        queuedPatch: Partial<Lead> | null;
+        waiters: Array<{ resolve: () => void; reject: (err: unknown) => void }>;
+      }
+    >
+  >(new Map());
+  const recentLocalItemSaveAtRef = useRef<Map<string, number>>(new Map());
+  const recentLocalLeadSaveAtRef = useRef<Map<string, number>>(new Map());
+
   // Fetch all registered team members from Supabase profiles
   const fetchTeamMembers = useCallback(async () => {
     if (!isSupabaseConfigured) return;
@@ -183,6 +212,7 @@ export function useContentStudio(userId?: string) {
         }
       }
 
+      teamMembersRef.current = combined;
       setTeamMembers(combined);
     } catch (e) {
       console.error('Failed to fetch team members:', e);
@@ -285,7 +315,19 @@ export function useContentStudio(userId?: string) {
         verifyDate: row.verify_date,
       }));
 
-      setItems(mapped);
+      setItems((prev) => {
+        const prevMap = new Map(prev.map((i) => [i.id, i]));
+        const now = Date.now();
+        return mapped.map((remote) => {
+          const queueState = itemWriteQueueRef.current.get(remote.id);
+          const recentAt = recentLocalItemSaveAtRef.current.get(remote.id) || 0;
+          // Ignore server/Realtime echo while a write is queued/in-flight or just saved locally
+          if (queueState?.inFlight || queueState?.queuedPatch || now - recentAt < 2500) {
+            return prevMap.get(remote.id) || remote;
+          }
+          return remote;
+        });
+      });
     } catch (e: any) {
       console.error('Failed to fetch items:', e);
       setError(e.message);
@@ -309,116 +351,137 @@ export function useContentStudio(userId?: string) {
       }
 
       const metaCache = getLeadMetaCache();
+      const currentMembers = teamMembersRef.current;
 
-      setLeads(
-        (data || []).map((l: any) => {
-          const cached = metaCache[l.id] || {};
-          const matchedProfile = l.owner_id ? teamMembers.find((m) => m.id === l.owner_id) : null;
-          const resolvedOwner =
-            l.owner_name ||
-            cached.owner ||
-            matchedProfile?.full_name ||
-            '';
+      const remoteLeads: Lead[] = (data || []).map((l: any) => {
+        const cached = metaCache[l.id] || {};
+        const matchedProfile = l.owner_id ? currentMembers.find((m) => m.id === l.owner_id) : null;
+        const resolvedOwner =
+          l.owner_name ||
+          cached.owner ||
+          matchedProfile?.full_name ||
+          '';
 
-          // Authoritative status: if cached metadata has an explicit transition (e.g. On hold), prefer cached
-          const resolvedStatus = cached.status || l.status || 'New';
+        // Authoritative status: if cached metadata has an explicit transition (e.g. On hold), prefer cached
+        const resolvedStatus = cached.status || l.status || 'New';
 
-          return {
-            id: l.id,
-            date: l.lead_date,
-            source: l.source,
-            name: l.name,
-            contact: l.contact || '',
-            service: l.service || '',
-            budget: l.budget || '',
-            status: resolvedStatus,
-            followUp: l.follow_up || cached.followUp || '',
-            owner: resolvedOwner,
-            ownerId: l.owner_id || cached.ownerId || matchedProfile?.id || null,
-            holdReason: l.hold_reason || cached.holdReason || '',
-            holdNotes: l.hold_notes || cached.holdNotes || '',
-            previousStatus: l.previous_status || cached.previousStatus || '',
-            resumeDate: l.resume_date || cached.resumeDate || '',
-            activityLog: Array.isArray(l.activity_log) && l.activity_log.length > 0
-              ? l.activity_log
-              : (cached.activityLog || []),
-          };
-        })
-      );
+        return {
+          id: l.id,
+          date: l.lead_date,
+          source: l.source,
+          name: l.name,
+          contact: l.contact || '',
+          service: l.service || '',
+          budget: l.budget || '',
+          status: resolvedStatus,
+          followUp: l.follow_up || cached.followUp || '',
+          owner: resolvedOwner,
+          ownerId: l.owner_id || cached.ownerId || matchedProfile?.id || null,
+          holdReason: l.hold_reason || cached.holdReason || '',
+          holdNotes: l.hold_notes || cached.holdNotes || '',
+          previousStatus: l.previous_status || cached.previousStatus || '',
+          resumeDate: l.resume_date || cached.resumeDate || '',
+          activityLog: Array.isArray(l.activity_log) && l.activity_log.length > 0
+            ? l.activity_log
+            : (cached.activityLog || []),
+        };
+      });
+
+      setLeads((prev) => {
+        const prevMap = new Map(prev.map((l) => [l.id, l]));
+        const now = Date.now();
+        return remoteLeads.map((remote) => {
+          const queueState = leadWriteQueueRef.current.get(remote.id);
+          const recentAt = recentLocalLeadSaveAtRef.current.get(remote.id) || 0;
+          if (queueState?.inFlight || queueState?.queuedPatch || now - recentAt < 2500) {
+            return prevMap.get(remote.id) || remote;
+          }
+          return remote;
+        });
+      });
     } catch (e: any) {
       console.error('Failed to fetch leads:', e);
     }
-  }, [teamMembers]);
+  }, []);
 
-  // Initial load
+  // Initial load (runs once per auth userId, never loops)
   useEffect(() => {
+    let cancelled = false;
     async function loadAll() {
       setLoading(true);
       if (isSupabaseConfigured) {
         try {
-          await Promise.all([fetchItems(), fetchLeads(), fetchTeamMembers()]);
+          await fetchTeamMembers();
+          if (!cancelled) {
+            await Promise.all([fetchItems(), fetchLeads()]);
+          }
         } catch {
-          // Handled
+          // Handled inside individual fetchers
         }
       }
-      setIsLoaded(true);
-      setLoading(false);
+      if (!cancelled) {
+        setIsLoaded(true);
+        setLoading(false);
+      }
     }
     loadAll();
-  }, [fetchItems, fetchLeads, fetchTeamMembers]);
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, fetchItems, fetchLeads, fetchTeamMembers]);
 
-  // Mutations
-  const updateItem = async (id: string, patch: Partial<Item>) => {
-    // Optimistic UI update
-    setItems((curr) => curr.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  const persistItemPatchToSupabase = useCallback(async (id: string, patch: ItemPatch) => {
+    const dbPatch: any = {};
+    if (patch.title !== undefined) dbPatch.title = patch.title;
+    if (patch.type !== undefined) dbPatch.content_type = patch.type;
+    if (patch.pillar !== undefined) dbPatch.pillar = patch.pillar;
+    if (patch.goal !== undefined) dbPatch.goal = patch.goal;
+    if (patch.date !== undefined) dbPatch.post_date = patch.date;
+    if (patch.time !== undefined) dbPatch.post_time = patch.time;
+    if (patch.status !== undefined) dbPatch.status = patch.status;
+    if (patch.priority !== undefined) dbPatch.priority = patch.priority;
+    if (patch.brief !== undefined) dbPatch.brief = patch.brief;
+    if (patch.verifyDate !== undefined) dbPatch.verify_date = patch.verifyDate;
+    if ('assigneeId' in patch) dbPatch.assignee_id = patch.assigneeId || null;
 
-    if (!isSupabaseConfigured) return;
+    if (patch.copy) {
+      if (patch.copy.onScreen !== undefined) dbPatch.copy_on_screen = patch.copy.onScreen;
+      if (patch.copy.caption !== undefined) dbPatch.copy_caption = patch.copy.caption;
+      if (patch.copy.hashtags !== undefined) dbPatch.copy_hashtags = patch.copy.hashtags;
+      if (patch.copy.cta !== undefined) dbPatch.copy_cta = patch.copy.cta;
+      if (patch.copy.script !== undefined) dbPatch.copy_script = patch.copy.script;
+    }
 
-    try {
-      const dbPatch: any = {};
-      if (patch.title !== undefined) dbPatch.title = patch.title;
-      if (patch.type !== undefined) {
-        dbPatch.content_type = patch.type;
+    if (Object.keys(dbPatch).length > 0) {
+      const { error: itemErr } = await supabase.from('items').update(dbPatch).eq('id', id);
+      if (itemErr) throw itemErr;
+    }
+
+    // Handle checklist updates if present
+    if (patch.checklist) {
+      const keepCheckIds = patch.checklist.map((c) => c.id).filter(Boolean) as string[];
+      if (keepCheckIds.length > 0) {
+        const { error: delErr } = await supabase
+          .from('item_checklist')
+          .delete()
+          .eq('item_id', id)
+          .not('id', 'in', `(${keepCheckIds.join(',')})`);
+        if (delErr) throw delErr;
+      } else {
+        const { error: delErr } = await supabase.from('item_checklist').delete().eq('item_id', id);
+        if (delErr) throw delErr;
       }
-      if (patch.pillar !== undefined) dbPatch.pillar = patch.pillar;
-      if (patch.goal !== undefined) dbPatch.goal = patch.goal;
-      if (patch.date !== undefined) dbPatch.post_date = patch.date;
-      if (patch.time !== undefined) dbPatch.post_time = patch.time;
-      if (patch.status !== undefined) dbPatch.status = patch.status;
-      if (patch.priority !== undefined) dbPatch.priority = patch.priority;
-      if (patch.brief !== undefined) dbPatch.brief = patch.brief;
-      if (patch.verifyDate !== undefined) dbPatch.verify_date = patch.verifyDate;
-      if ('assigneeId' in patch) dbPatch.assignee_id = patch.assigneeId || null;
 
-      if (Object.keys(dbPatch).length > 0) {
-        await supabase.from('items').update(dbPatch).eq('id', id);
-      }
-
-      // Handle checklist updates if present
-      if (patch.checklist) {
-        const keepCheckIds = patch.checklist.map((c) => c.id).filter(Boolean) as string[];
-        if (keepCheckIds.length > 0) {
-          await supabase
-            .from('item_checklist')
-            .delete()
-            .eq('item_id', id)
-            .not('id', 'in', `(${keepCheckIds.join(',')})`);
-        } else {
-          await supabase
-            .from('item_checklist')
-            .delete()
-            .eq('item_id', id);
-        }
-
-        for (let i = 0; i < patch.checklist.length; i++) {
-          const c = patch.checklist[i];
+      await Promise.all(
+        patch.checklist.map(async (c, i) => {
           if (c.id) {
-            await supabase
+            const { error: upErr } = await supabase
               .from('item_checklist')
               .update({ done: c.done, label: c.label, sort_order: i })
               .eq('id', c.id);
+            if (upErr) throw upErr;
           } else {
-            const { data } = await supabase
+            const { data, error: insErr } = await supabase
               .from('item_checklist')
               .insert({
                 item_id: id,
@@ -428,33 +491,32 @@ export function useContentStudio(userId?: string) {
               })
               .select('id')
               .single();
+            if (insErr) throw insErr;
             if (data) c.id = data.id;
           }
-        }
+        })
+      );
+    }
+
+    // Handle references updates if present
+    if (patch.references) {
+      const keepIds = patch.references.map((r) => r.id).filter(Boolean) as string[];
+      if (keepIds.length > 0) {
+        const { error: delErr } = await supabase
+          .from('item_references')
+          .delete()
+          .eq('item_id', id)
+          .not('id', 'in', `(${keepIds.join(',')})`);
+        if (delErr) throw delErr;
+      } else {
+        const { error: delErr } = await supabase.from('item_references').delete().eq('item_id', id);
+        if (delErr) throw delErr;
       }
 
-      // Handle references updates if present
-      if (patch.references) {
-        // Clean up references deleted in UI
-        const keepIds = patch.references.map((r) => r.id).filter(Boolean) as string[];
-        if (keepIds.length > 0) {
-          await supabase
-            .from('item_references')
-            .delete()
-            .eq('item_id', id)
-            .not('id', 'in', `(${keepIds.join(',')})`);
-        } else {
-          await supabase
-            .from('item_references')
-            .delete()
-            .eq('item_id', id);
-        }
-
-        // Upsert references
-        for (let i = 0; i < patch.references.length; i++) {
-          const r = patch.references[i];
+      await Promise.all(
+        patch.references.map(async (r, i) => {
           if (r.id) {
-            await supabase
+            const { error: upErr } = await supabase
               .from('item_references')
               .update({
                 label: r.label,
@@ -464,8 +526,9 @@ export function useContentStudio(userId?: string) {
                 sort_order: i,
               })
               .eq('id', r.id);
+            if (upErr) throw upErr;
           } else {
-            const { data } = await supabase
+            const { data, error: insErr } = await supabase
               .from('item_references')
               .insert({
                 item_id: id,
@@ -477,32 +540,32 @@ export function useContentStudio(userId?: string) {
               })
               .select('id')
               .single();
+            if (insErr) throw insErr;
             if (data) r.id = data.id;
           }
-        }
+        })
+      );
+    }
+
+    // Handle shots updates if present
+    if (patch.shots) {
+      const keepShotIds = patch.shots.map((s) => s.id).filter(Boolean) as string[];
+      if (keepShotIds.length > 0) {
+        const { error: delErr } = await supabase
+          .from('item_shots')
+          .delete()
+          .eq('item_id', id)
+          .not('id', 'in', `(${keepShotIds.join(',')})`);
+        if (delErr) throw delErr;
+      } else {
+        const { error: delErr } = await supabase.from('item_shots').delete().eq('item_id', id);
+        if (delErr) throw delErr;
       }
 
-      // Handle shots updates if present
-      if (patch.shots) {
-        // Clean up shots deleted in UI
-        const keepShotIds = patch.shots.map((s) => s.id).filter(Boolean) as string[];
-        if (keepShotIds.length > 0) {
-          await supabase
-            .from('item_shots')
-            .delete()
-            .eq('item_id', id)
-            .not('id', 'in', `(${keepShotIds.join(',')})`);
-        } else {
-          await supabase
-            .from('item_shots')
-            .delete()
-            .eq('item_id', id);
-        }
-
-        for (let i = 0; i < patch.shots.length; i++) {
-          const s = patch.shots[i];
+      await Promise.all(
+        patch.shots.map(async (s, i) => {
           if (s.id) {
-            await supabase
+            const { error: upErr } = await supabase
               .from('item_shots')
               .update({
                 shot_order: s.order,
@@ -511,8 +574,9 @@ export function useContentStudio(userId?: string) {
                 sort_order: i,
               })
               .eq('id', s.id);
+            if (upErr) throw upErr;
           } else {
-            const { data } = await supabase
+            const { data, error: insErr } = await supabase
               .from('item_shots')
               .insert({
                 item_id: id,
@@ -523,40 +587,82 @@ export function useContentStudio(userId?: string) {
               })
               .select('id')
               .single();
+            if (insErr) throw insErr;
             if (data) s.id = data.id;
           }
-        }
-      }
-    } catch (err) {
-      console.error('Error updating item in Supabase:', err);
+        })
+      );
     }
-  };
+  }, []);
 
-  const updateCopy = async (id: string, key: keyof Item['copy'], value: string) => {
+  // Mutations (coalesced per item ID: at most 1 in-flight write per record, obsolete intermediates deduped)
+  const updateItem = useCallback(async (id: string, patch: ItemPatch) => {
+    recentLocalItemSaveAtRef.current.set(id, Date.now());
     setItems((curr) =>
-      curr.map((item) =>
-        item.id === id ? { ...item, copy: { ...item.copy, [key]: value } } : item
-      )
+      curr.map((item) => {
+        if (item.id !== id) return item;
+        const nextCopy = patch.copy ? { ...item.copy, ...patch.copy } : item.copy;
+        return { ...item, ...patch, copy: nextCopy };
+      })
     );
 
     if (!isSupabaseConfigured) return;
 
-    const patch: Database['public']['Tables']['items']['Update'] = {};
-    if (key === 'onScreen') patch.copy_on_screen = value;
-    else if (key === 'caption') patch.copy_caption = value;
-    else if (key === 'hashtags') patch.copy_hashtags = value;
-    else if (key === 'cta') patch.copy_cta = value;
-    else if (key === 'script') patch.copy_script = value;
-
-    try {
-      await supabase
-        .from('items')
-        .update(patch)
-        .eq('id', id);
-    } catch (err) {
-      console.error('Error updating copy in Supabase:', err);
+    let entry = itemWriteQueueRef.current.get(id);
+    if (!entry) {
+      entry = { inFlight: false, queuedPatch: null, waiters: [] };
+      itemWriteQueueRef.current.set(id, entry);
     }
-  };
+
+    const prevQueued = entry.queuedPatch || {};
+    entry.queuedPatch = {
+      ...prevQueued,
+      ...patch,
+      ...(prevQueued.copy || patch.copy
+        ? { copy: { ...(prevQueued.copy || {}), ...(patch.copy || {}) } }
+        : {}),
+    };
+
+    const completion = new Promise<void>((resolve, reject) => {
+      entry!.waiters.push({ resolve, reject });
+    });
+
+    if (!entry.inFlight) {
+      entry.inFlight = true;
+      (async () => {
+        try {
+          while (entry!.queuedPatch) {
+            const batch = entry!.queuedPatch;
+            entry!.queuedPatch = null;
+            const batchWaiters = entry!.waiters.splice(0, entry!.waiters.length);
+            try {
+              recentLocalItemSaveAtRef.current.set(id, Date.now());
+              await persistItemPatchToSupabase(id, batch);
+              recentLocalItemSaveAtRef.current.set(id, Date.now());
+              batchWaiters.forEach((w) => w.resolve());
+            } catch (err) {
+              console.error('Error updating item in Supabase:', err);
+              batchWaiters.forEach((w) => w.reject(err));
+            }
+          }
+        } finally {
+          entry!.inFlight = false;
+          if (!entry!.queuedPatch && entry!.waiters.length === 0) {
+            itemWriteQueueRef.current.delete(id);
+          }
+        }
+      })();
+    }
+
+    return completion;
+  }, [persistItemPatchToSupabase]);
+
+  const updateCopy = useCallback(
+    async (id: string, key: keyof Item['copy'], value: string) => {
+      return updateItem(id, { copy: { [key]: value } });
+    },
+    [updateItem]
+  );
 
   const createItem = async (preset?: Partial<Item>): Promise<Item | null> => {
     const defaultItem: Item = {
@@ -682,29 +788,10 @@ export function useContentStudio(userId?: string) {
     }
   };
 
-  const updateLead = async (leadId: string, patch: Partial<Lead>) => {
-    // 1. Immediately cache all lead metadata including status, previousStatus, and hold attributes
-    saveLeadMetaCache(leadId, {
-      ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.previousStatus !== undefined && { previousStatus: patch.previousStatus }),
-      ...(patch.owner !== undefined && { owner: patch.owner }),
-      ...(patch.ownerId !== undefined && { ownerId: patch.ownerId }),
-      ...(patch.holdReason !== undefined && { holdReason: patch.holdReason }),
-      ...(patch.holdNotes !== undefined && { holdNotes: patch.holdNotes }),
-      ...(patch.resumeDate !== undefined && { resumeDate: patch.resumeDate }),
-      ...(patch.followUp !== undefined && { followUp: patch.followUp }),
-      ...(patch.activityLog !== undefined && { activityLog: patch.activityLog }),
-    });
-
-    // 2. Optimistic UI update
-    setLeads((curr) => curr.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
-
-    if (!isSupabaseConfigured) return;
-
+  const persistLeadPatchToSupabase = useCallback(async (leadId: string, patch: Partial<Lead>) => {
     const isUUID = (val?: string | null) =>
       Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
 
-    // Local-only fallback lead: already updated in cache and state
     if (!isUUID(leadId)) {
       return;
     }
@@ -726,36 +813,95 @@ export function useContentStudio(userId?: string) {
     if (patch.resumeDate !== undefined) dbPatch.resume_date = patch.resumeDate || null;
     if (patch.activityLog !== undefined) dbPatch.activity_log = patch.activityLog;
 
-    try {
-      const { error } = await supabase.from('leads').update(dbPatch).eq('id', leadId);
-      if (error) {
-        // Fallback if extended columns are not yet applied via migration
-        if (error.code === '42703' || error.message?.includes('column')) {
-          const basicPatch: any = {};
-          if (patch.date !== undefined) basicPatch.lead_date = patch.date;
-          if (patch.source !== undefined) basicPatch.source = patch.source;
-          if (patch.name !== undefined) basicPatch.name = patch.name;
-          if (patch.contact !== undefined) basicPatch.contact = patch.contact;
-          if (patch.service !== undefined) basicPatch.service = patch.service;
-          if (patch.budget !== undefined) basicPatch.budget = patch.budget;
-          if (patch.status !== undefined) basicPatch.status = patch.status;
-          if (patch.followUp !== undefined) basicPatch.follow_up = patch.followUp || null;
-          if (isUUID(patch.ownerId)) basicPatch.owner_id = patch.ownerId;
-          const retry = await supabase.from('leads').update(basicPatch).eq('id', leadId);
-          if (retry.error) {
-            console.error('Database update failed on fallback:', retry.error);
-            throw retry.error;
-          }
-        } else {
-          console.error('Error updating lead in Supabase:', error);
-          throw error;
+    if (Object.keys(dbPatch).length === 0) return;
+
+    const { error } = await supabase.from('leads').update(dbPatch).eq('id', leadId);
+    if (error) {
+      // Fallback if extended columns are not yet applied via migration
+      if (error.code === '42703' || error.message?.includes('column')) {
+        const basicPatch: any = {};
+        if (patch.date !== undefined) basicPatch.lead_date = patch.date;
+        if (patch.source !== undefined) basicPatch.source = patch.source;
+        if (patch.name !== undefined) basicPatch.name = patch.name;
+        if (patch.contact !== undefined) basicPatch.contact = patch.contact;
+        if (patch.service !== undefined) basicPatch.service = patch.service;
+        if (patch.budget !== undefined) basicPatch.budget = patch.budget;
+        if (patch.status !== undefined) basicPatch.status = patch.status;
+        if (patch.followUp !== undefined) basicPatch.follow_up = patch.followUp || null;
+        if (isUUID(patch.ownerId)) basicPatch.owner_id = patch.ownerId;
+        const retry = await supabase.from('leads').update(basicPatch).eq('id', leadId);
+        if (retry.error) {
+          console.error('Database update failed on fallback:', retry.error);
+          throw retry.error;
         }
+      } else {
+        console.error('Error updating lead in Supabase:', error);
+        throw error;
       }
-    } catch (e: any) {
-      console.error('Error updating lead in Supabase:', e);
-      throw e;
     }
-  };
+  }, []);
+
+  const updateLead = useCallback(async (leadId: string, patch: Partial<Lead>) => {
+    recentLocalLeadSaveAtRef.current.set(leadId, Date.now());
+
+    // 1. Cache lead metadata synchronously when saving (debounced for text inputs)
+    saveLeadMetaCache(leadId, {
+      ...(patch.status !== undefined && { status: patch.status }),
+      ...(patch.previousStatus !== undefined && { previousStatus: patch.previousStatus }),
+      ...(patch.owner !== undefined && { owner: patch.owner }),
+      ...(patch.ownerId !== undefined && { ownerId: patch.ownerId }),
+      ...(patch.holdReason !== undefined && { holdReason: patch.holdReason }),
+      ...(patch.holdNotes !== undefined && { holdNotes: patch.holdNotes }),
+      ...(patch.resumeDate !== undefined && { resumeDate: patch.resumeDate }),
+      ...(patch.followUp !== undefined && { followUp: patch.followUp }),
+      ...(patch.activityLog !== undefined && { activityLog: patch.activityLog }),
+    });
+
+    // 2. Optimistic UI update
+    setLeads((curr) => curr.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
+
+    if (!isSupabaseConfigured) return;
+
+    let entry = leadWriteQueueRef.current.get(leadId);
+    if (!entry) {
+      entry = { inFlight: false, queuedPatch: null, waiters: [] };
+      leadWriteQueueRef.current.set(leadId, entry);
+    }
+
+    entry.queuedPatch = { ...(entry.queuedPatch || {}), ...patch };
+    const completion = new Promise<void>((resolve, reject) => {
+      entry!.waiters.push({ resolve, reject });
+    });
+
+    if (!entry.inFlight) {
+      entry.inFlight = true;
+      (async () => {
+        try {
+          while (entry!.queuedPatch) {
+            const batch = entry!.queuedPatch;
+            entry!.queuedPatch = null;
+            const batchWaiters = entry!.waiters.splice(0, entry!.waiters.length);
+            try {
+              recentLocalLeadSaveAtRef.current.set(leadId, Date.now());
+              await persistLeadPatchToSupabase(leadId, batch);
+              recentLocalLeadSaveAtRef.current.set(leadId, Date.now());
+              batchWaiters.forEach((w) => w.resolve());
+            } catch (err) {
+              console.error('Error updating lead in Supabase:', err);
+              batchWaiters.forEach((w) => w.reject(err));
+            }
+          }
+        } finally {
+          entry!.inFlight = false;
+          if (!entry!.queuedPatch && entry!.waiters.length === 0) {
+            leadWriteQueueRef.current.delete(leadId);
+          }
+        }
+      })();
+    }
+
+    return completion;
+  }, [persistLeadPatchToSupabase]);
 
   const addLead = async () => {
     const isUUID = (val?: string | null) =>

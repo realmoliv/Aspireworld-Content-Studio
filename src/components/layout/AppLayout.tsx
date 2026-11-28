@@ -16,7 +16,7 @@ interface AppLayoutProps {
   onToggleTheme?: () => void;
 }
 
-export function AppLayout({
+export const AppLayout = React.memo(function AppLayout({
   children,
   profileName = '',
   avatarInitials = '',
@@ -223,4 +223,4 @@ export function AppLayout({
       )}
     </div>
   );
-}
+});

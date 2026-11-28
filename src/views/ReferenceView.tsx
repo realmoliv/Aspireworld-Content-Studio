@@ -1,18 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useDeferredValue } from 'react';
 import type { ReferenceItem, Pillar } from '@/types';
 import { SectionTitle, Button, Input, Pill, Field, Select } from '@/components/ui';
 import { ReferenceEmbedPreview } from '@/components/ReferenceEmbedPreview';
 import { savedReferences, pillars } from '@/constants';
 
 interface ReferenceViewProps {
-  search: string;
-  setSearch: (s: string) => void;
   onUse: (ref: ReferenceItem) => void;
 }
 
 const STORAGE_KEY = 'aspire_saved_references_custom';
 
-export function ReferenceView({ search, setSearch, onUse }: ReferenceViewProps) {
+export function ReferenceView({ onUse }: ReferenceViewProps) {
+  const [search, setSearch] = useState('');
   const [libraryRefs, setLibraryRefs] = useState<ReferenceItem[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -44,6 +43,7 @@ export function ReferenceView({ search, setSearch, onUse }: ReferenceViewProps) 
   const [newPillar, setNewPillar] = useState<Pillar>('Proof');
   const [newInstruction, setNewInstruction] = useState('');
   const [activePreviewRef, setActivePreviewRef] = useState<ReferenceItem | null>(null);
+  const deferredNewUrl = useDeferredValue(newUrl);
 
   useEffect(() => {
     try {
@@ -72,11 +72,16 @@ export function ReferenceView({ search, setSearch, onUse }: ReferenceViewProps) 
     setIsModalOpen(false);
   };
 
-  const filtered = libraryRefs.filter((r) =>
-    r.label.toLowerCase().includes(search.toLowerCase()) ||
-    (r.instruction && r.instruction.toLowerCase().includes(search.toLowerCase())) ||
-    (r.type && r.type.toLowerCase().includes(search.toLowerCase()))
-  );
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    if (!q) return libraryRefs;
+    return libraryRefs.filter(
+      (r) =>
+        r.label.toLowerCase().includes(q) ||
+        (r.instruction && r.instruction.toLowerCase().includes(q)) ||
+        (r.type && r.type.toLowerCase().includes(q))
+    );
+  }, [libraryRefs, search]);
 
   return (
     <>
@@ -269,10 +274,10 @@ export function ReferenceView({ search, setSearch, onUse }: ReferenceViewProps) 
                 />
               </Field>
 
-              {newUrl.trim() && (
+              {deferredNewUrl.trim() && (
                 <div className="span-2 ref-modal-live-preview">
                   <span className="eyebrow">LIVE EMBED PREVIEW</span>
-                  <ReferenceEmbedPreview url={newUrl} label={newLabel || 'Reference preview'} />
+                  <ReferenceEmbedPreview url={deferredNewUrl} label={newLabel || 'Reference preview'} />
                 </div>
               )}
 

@@ -1,6 +1,7 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import type { Lead, TeamMember, LeadActivity } from '@/types';
 import { SectionTitle, Button, Input, Select, Pill } from '@/components/ui';
+import { useEntityDraft } from '@/hooks/useDebouncedSave';
 import {
   leadStatuses,
   leadSources,
@@ -244,12 +245,13 @@ export function LeadsView({
     }
   };
 
-  const update = async (id: string, patch: Partial<Lead>) => {
+  const update = useCallback(async (id: string, patch: Partial<Lead>) => {
     if (onUpdateLead) {
       await onUpdateLead(id, patch);
+    } else {
+      setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
     }
-    setLeads((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
-  };
+  }, [onUpdateLead, setLeads]);
 
   const logActivity = (
     lead: Lead,
@@ -580,45 +582,55 @@ export function LeadsView({
   };
 
   // Calculate Actionable Follow-up Queues
-  const activeFollowUps = leads
-    .filter((l) => !['Closed', 'Cancelled', 'Lost', 'Wrong data'].includes(l.status) && l.followUp)
-    .map((l) => {
-      const diffInfo = getDaysDifference(l.followUp);
-      return { lead: l, ...diffInfo };
-    });
+  const { activeFollowUps, overdueLeads, todayLeads, upcomingLeads, displayedQueueItems } = useMemo(() => {
+    const active = leads
+      .filter((l) => !['Closed', 'Cancelled', 'Lost', 'Wrong data'].includes(l.status) && l.followUp)
+      .map((l) => {
+        const diffInfo = getDaysDifference(l.followUp);
+        return { lead: l, ...diffInfo };
+      });
+    const overdue = active.filter((item) => item.isOverdue);
+    const today = active.filter((item) => item.isToday);
+    const upcoming = active.filter((item) => item.diff !== null && item.diff > 0 && item.diff <= 7);
+    const displayed =
+      queueTab === 'overdue'
+        ? overdue
+        : queueTab === 'today'
+        ? today
+        : queueTab === 'upcoming'
+        ? upcoming
+        : [...overdue, ...today, ...upcoming];
 
-  const overdueLeads = activeFollowUps.filter((item) => item.isOverdue);
-  const todayLeads = activeFollowUps.filter((item) => item.isToday);
-  const upcomingLeads = activeFollowUps.filter((item) => item.diff !== null && item.diff > 0 && item.diff <= 7);
-
-  const displayedQueueItems =
-    queueTab === 'overdue'
-      ? overdueLeads
-      : queueTab === 'today'
-      ? todayLeads
-      : queueTab === 'upcoming'
-      ? upcomingLeads
-      : [...overdueLeads, ...todayLeads, ...upcomingLeads];
+    return {
+      activeFollowUps: active,
+      overdueLeads: overdue,
+      todayLeads: today,
+      upcomingLeads: upcoming,
+      displayedQueueItems: displayed,
+    };
+  }, [leads, queueTab]);
 
   // Filtering
-  const filteredLeads = leads.filter((l) => {
-    if (statusFilter !== 'ALL' && l.status !== statusFilter) return false;
-    const resolvedOwner = getSelectedOwnerValue(l.owner) || 'Unassigned';
-    if (ownerFilter !== 'ALL' && resolvedOwner !== ownerFilter) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const match =
-        l.name.toLowerCase().includes(q) ||
-        l.contact.toLowerCase().includes(q) ||
-        l.service.toLowerCase().includes(q) ||
-        l.budget.toLowerCase().includes(q) ||
-        (l.owner && l.owner.toLowerCase().includes(q)) ||
-        resolvedOwner.toLowerCase().includes(q) ||
-        (l.holdReason && l.holdReason.toLowerCase().includes(q));
-      if (!match) return false;
-    }
-    return true;
-  });
+  const filteredLeads = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return leads.filter((l) => {
+      if (statusFilter !== 'ALL' && l.status !== statusFilter) return false;
+      const resolvedOwner = getSelectedOwnerValue(l.owner) || 'Unassigned';
+      if (ownerFilter !== 'ALL' && resolvedOwner !== ownerFilter) return false;
+      if (q) {
+        const match =
+          l.name.toLowerCase().includes(q) ||
+          l.contact.toLowerCase().includes(q) ||
+          l.service.toLowerCase().includes(q) ||
+          l.budget.toLowerCase().includes(q) ||
+          (l.owner && l.owner.toLowerCase().includes(q)) ||
+          resolvedOwner.toLowerCase().includes(q) ||
+          (l.holdReason && l.holdReason.toLowerCase().includes(q));
+        if (!match) return false;
+      }
+      return true;
+    });
+  }, [leads, statusFilter, ownerFilter, searchQuery, effectiveTeamMembers]);
 
   return (
     <div className="lead-tracker-view">
@@ -1038,38 +1050,7 @@ export function LeadsView({
                       <td colSpan={6}>
                         <div className="expanded-details-container">
                           <div className="details-col">
-                            <span className="eyebrow">QUICK EDIT RECORD</span>
-                            <div className="details-input-grid">
-                              <label>
-                                <span>LEAD NAME:</span>
-                                <Input
-                                  value={l.name}
-                                  onChange={(e) => update(l.id, { name: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                <span>CONTACT INFO:</span>
-                                <Input
-                                  value={l.contact}
-                                  placeholder="@handle or phone"
-                                  onChange={(e) => update(l.id, { contact: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                <span>SERVICE REQUIRED:</span>
-                                <Input
-                                  value={l.service}
-                                  onChange={(e) => update(l.id, { service: e.target.value })}
-                                />
-                              </label>
-                              <label>
-                                <span>BUDGET:</span>
-                                <Input
-                                  value={l.budget}
-                                  onChange={(e) => update(l.id, { budget: e.target.value })}
-                                />
-                              </label>
-                            </div>
+                            <LeadQuickEditDesktop lead={l} onPersist={update} setToast={setToast} />
                           </div>
 
                           <div className="details-col">
@@ -1333,30 +1314,12 @@ export function LeadsView({
                     </Select>
                   </div>
 
-                  <div className="mobile-expanded-field">
-                    <label>FOLLOW-UP DATE</label>
-                    <Input
-                      type="date"
-                      value={l.followUp || ''}
-                      onChange={(e) => handleFollowUpChange(l, e.target.value)}
-                    />
-                  </div>
-
-                  <div className="mobile-expanded-field">
-                    <label>SERVICE</label>
-                    <Input
-                      value={l.service}
-                      onChange={(e) => update(l.id, { service: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="mobile-expanded-field">
-                    <label>BUDGET</label>
-                    <Input
-                      value={l.budget}
-                      onChange={(e) => update(l.id, { budget: e.target.value })}
-                    />
-                  </div>
+                  <LeadQuickEditMobile
+                    lead={l}
+                    onPersist={update}
+                    onFollowUpChange={handleFollowUpChange}
+                    setToast={setToast}
+                  />
                 </div>
               )}
             </div>
@@ -1990,3 +1953,157 @@ export function LeadsView({
     </div>
   );
 }
+
+const SaveIndicator = ({
+  saveState,
+  errorMsg,
+  onRetry,
+}: {
+  saveState: 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
+  errorMsg: string | null;
+  onRetry: () => void;
+}) => {
+  if (saveState === 'idle') return null;
+  return (
+    <span style={{ marginLeft: '0.5rem', fontSize: '0.68rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+      {saveState === 'dirty' && <span style={{ color: 'var(--grey)' }}>Unsaved…</span>}
+      {saveState === 'saving' && <span style={{ color: 'var(--grey)' }}>Saving…</span>}
+      {saveState === 'saved' && <span style={{ color: '#22c55e', fontWeight: 600 }}>Saved</span>}
+      {saveState === 'error' && (
+        <span style={{ color: '#ef4444', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}>
+          Save failed{errorMsg ? `: ${errorMsg}` : ''}
+          <button
+            type="button"
+            onClick={onRetry}
+            style={{
+              background: 'transparent',
+              border: '1px solid #ef4444',
+              color: '#ef4444',
+              padding: '0.05rem 0.35rem',
+              fontSize: '0.65rem',
+              cursor: 'pointer',
+            }}
+          >
+            Retry
+          </button>
+        </span>
+      )}
+    </span>
+  );
+};
+
+const LeadQuickEditDesktop = React.memo(function LeadQuickEditDesktop({
+  lead,
+  onPersist,
+  setToast,
+}: {
+  lead: Lead;
+  onPersist: (id: string, patch: Partial<Lead>) => Promise<void>;
+  setToast?: (msg: string) => void;
+}) {
+  const { draft, saveState, errorMsg, queuePatch, flushIfDirty, retry } = useEntityDraft<Lead>({
+    entityId: lead.id,
+    entity: lead,
+    onPersist: (id, patch) => onPersist(id, patch as Partial<Lead>),
+    debounceMs: 600,
+    onUnmountError: () => setToast?.('Failed to save lead edits. Please check connection.'),
+  });
+
+  return (
+    <>
+      <span className="eyebrow">
+        QUICK EDIT RECORD
+        <SaveIndicator saveState={saveState} errorMsg={errorMsg} onRetry={retry} />
+      </span>
+      <div className="details-input-grid">
+        <label>
+          <span>LEAD NAME:</span>
+          <Input
+            value={draft.name}
+            onChange={(e) => queuePatch({ name: e.target.value })}
+            onBlur={flushIfDirty}
+          />
+        </label>
+        <label>
+          <span>CONTACT INFO:</span>
+          <Input
+            value={draft.contact}
+            placeholder="@handle or phone"
+            onChange={(e) => queuePatch({ contact: e.target.value })}
+            onBlur={flushIfDirty}
+          />
+        </label>
+        <label>
+          <span>SERVICE REQUIRED:</span>
+          <Input
+            value={draft.service}
+            onChange={(e) => queuePatch({ service: e.target.value })}
+            onBlur={flushIfDirty}
+          />
+        </label>
+        <label>
+          <span>BUDGET:</span>
+          <Input
+            value={draft.budget}
+            onChange={(e) => queuePatch({ budget: e.target.value })}
+            onBlur={flushIfDirty}
+          />
+        </label>
+      </div>
+    </>
+  );
+});
+
+const LeadQuickEditMobile = React.memo(function LeadQuickEditMobile({
+  lead,
+  onPersist,
+  onFollowUpChange,
+  setToast,
+}: {
+  lead: Lead;
+  onPersist: (id: string, patch: Partial<Lead>) => Promise<void>;
+  onFollowUpChange: (lead: Lead, newDate: string) => Promise<void> | void;
+  setToast?: (msg: string) => void;
+}) {
+  const { draft, saveState, errorMsg, queuePatch, flushIfDirty, retry } = useEntityDraft<Lead>({
+    entityId: lead.id,
+    entity: lead,
+    onPersist: (id, patch) => onPersist(id, patch as Partial<Lead>),
+    debounceMs: 600,
+    onUnmountError: () => setToast?.('Failed to save lead edits. Please check connection.'),
+  });
+
+  return (
+    <>
+      <div className="mobile-expanded-field">
+        <label>
+          FOLLOW-UP DATE
+          <SaveIndicator saveState={saveState} errorMsg={errorMsg} onRetry={retry} />
+        </label>
+        <Input
+          type="date"
+          value={lead.followUp || ''}
+          onChange={(e) => onFollowUpChange(lead, e.target.value)}
+        />
+      </div>
+
+      <div className="mobile-expanded-field">
+        <label>SERVICE</label>
+        <Input
+          value={draft.service}
+          onChange={(e) => queuePatch({ service: e.target.value })}
+          onBlur={flushIfDirty}
+        />
+      </div>
+
+      <div className="mobile-expanded-field">
+        <label>BUDGET</label>
+        <Input
+          value={draft.budget}
+          onChange={(e) => queuePatch({ budget: e.target.value })}
+          onBlur={flushIfDirty}
+        />
+      </div>
+    </>
+  );
+});

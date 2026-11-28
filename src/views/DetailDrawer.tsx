@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useDeferredValue } from 'react';
 import type { Item, ContentType, Pillar, TeamMember } from '@/types';
 import { Button, Field, Input, Textarea, Select, Pill } from '@/components/ui';
 import { AssetUploadManager } from '@/components/AssetUploadManager';
 import { ReferenceEmbedPreview } from '@/components/ReferenceEmbedPreview';
+import { useEntityDraft, type DraftPatch } from '@/hooks/useDebouncedSave';
+import type { ItemPatch } from '@/hooks/useContentStudio';
 import { types, pillars, statuses, specMap, slug, getChecklistForType, getUserDesignation, getUserTitleCaseDesignation } from '@/constants';
 
 function parseCarouselSlides(onScreen: string): string[] {
@@ -32,8 +34,9 @@ interface DetailDrawerProps {
   item: Item;
   teamMembers?: TeamMember[];
   onClose: () => void;
-  onUpdate: (patch: Partial<Item>) => void;
-  onCopy: (key: keyof Item['copy'], value: string) => void;
+  onUpdate: (patch: Partial<Item>) => void | Promise<void>;
+  onUpdateItem?: (id: string, patch: ItemPatch) => Promise<void> | void;
+  onCopy: (key: keyof Item['copy'], value: string) => void | Promise<void>;
   onDuplicate: () => void;
   onDuplicateNext: () => void;
   setToast: (msg: string) => void;
@@ -51,6 +54,7 @@ export function DetailDrawer({
   teamMembers = [],
   onClose,
   onUpdate,
+  onUpdateItem,
   onCopy,
   onDuplicate,
   onDuplicateNext,
@@ -66,42 +70,86 @@ export function DetailDrawer({
   const [tab, setTab] = useState<'brief' | 'copy' | 'shots' | 'assets' | 'review'>('brief');
   const [comment, setComment] = useState('');
 
-  const isCarousel = item.type === 'Carousel';
+  const persistDraft = useCallback(
+    async (id: string, patch: DraftPatch<Item>) => {
+      if (onUpdateItem) {
+        await onUpdateItem(id, patch as ItemPatch);
+        return;
+      }
+      const legacyPatch: any = { ...patch };
+      if (patch.copy) {
+        for (const [k, v] of Object.entries(patch.copy)) {
+          if (v !== undefined) {
+            await onCopy(k as keyof Item['copy'], String(v));
+          }
+        }
+        delete legacyPatch.copy;
+      }
+      if (Object.keys(legacyPatch).length > 0) {
+        await onUpdate(legacyPatch);
+      }
+    },
+    [onUpdateItem, onUpdate, onCopy]
+  );
 
-  const [slides, setSlides] = useState<string[]>(() => parseCarouselSlides(item.copy.onScreen));
+  const {
+    draft,
+    saveState,
+    errorMsg,
+    queuePatch,
+    commitImmediate,
+    flush,
+    flushIfDirty,
+    retry,
+  } = useEntityDraft<Item>({
+    entityId: item.id,
+    entity: item,
+    onPersist: persistDraft,
+    debounceMs: 600,
+    onUnmountError: () => setToast('Failed to save changes. Check your connection.'),
+  });
+
+  const requestClose = useCallback(() => {
+    void flush();
+    onClose();
+  }, [flush, onClose]);
+
+  const isCarousel = draft.type === 'Carousel';
+
+  const [slides, setSlides] = useState<string[]>(() => parseCarouselSlides(draft.copy.onScreen));
 
   useEffect(() => {
-    setSlides(parseCarouselSlides(item.copy.onScreen));
-  }, [item.id, item.type]);
+    setSlides(parseCarouselSlides(draft.copy.onScreen));
+  }, [draft.id, draft.type]);
 
   const handleSlideChange = (index: number, val: string) => {
     const next = [...slides];
     next[index] = val;
     setSlides(next);
-    onCopy('onScreen', serializeCarouselSlides(next));
+    queuePatch({ copy: { onScreen: serializeCarouselSlides(next) } });
   };
 
   const handleAddSlide = () => {
     if (slides.length >= 5) return;
     const next = [...slides, ''];
     setSlides(next);
-    onCopy('onScreen', serializeCarouselSlides(next));
+    void commitImmediate({ copy: { onScreen: serializeCarouselSlides(next) } });
   };
 
   const handleRemoveSlide = (index: number) => {
     if (slides.length <= 1) {
       const next = [''];
       setSlides(next);
-      onCopy('onScreen', '');
+      void commitImmediate({ copy: { onScreen: '' } });
       return;
     }
     const next = slides.filter((_, idx) => idx !== index);
     setSlides(next);
-    onCopy('onScreen', serializeCarouselSlides(next));
+    void commitImmediate({ copy: { onScreen: serializeCarouselSlides(next) } });
   };
 
   const copyBrief = () => {
-    const text = `${item.title}\n${item.type} · ${item.pillar} · ${item.date} ${item.time}\n\nGOAL\n${item.goal}\n\nBRIEF\n${item.brief}\n\nON-SCREEN TEXT\n${item.copy.onScreen}\n\nCAPTION\n${item.copy.caption}\n\nCTA\n${item.copy.cta}\n\nSPECS\n${item.specs.join('\n')}`;
+    const text = `${draft.title}\n${draft.type} · ${draft.pillar} · ${draft.date} ${draft.time}\n\nGOAL\n${draft.goal}\n\nBRIEF\n${draft.brief}\n\nON-SCREEN TEXT\n${draft.copy.onScreen}\n\nCAPTION\n${draft.copy.caption}\n\nCTA\n${draft.copy.cta}\n\nSPECS\n${draft.specs.join('\n')}`;
     navigator.clipboard?.writeText(text);
     setToast('Brief copied for sharing.');
   };
@@ -111,9 +159,9 @@ export function DetailDrawer({
     if (onAddComment) {
       onAddComment(comment);
     } else {
-      onUpdate({
+      void commitImmediate({
         comments: [
-          ...item.comments,
+          ...draft.comments,
           { author: currentUserName || 'Team Member', text: comment, time: 'Now' },
         ],
       });
@@ -124,19 +172,49 @@ export function DetailDrawer({
   return (
     <div
       className="drawer-backdrop"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+      onMouseDown={(e) => e.target === e.currentTarget && requestClose()}
     >
       <aside className="drawer" role="dialog" aria-modal="true" aria-label="Content item detail">
         <header>
           <div>
-            <Pill tone={`pillar-${slug(item.pillar)}`}>{item.pillar}</Pill>
-            {item.verifyDate && <Pill tone="verify">VERIFY DATE</Pill>}
-            <h2>{item.title}</h2>
-            <span>
-              {item.date} · {item.time}
+            <Pill tone={`pillar-${slug(draft.pillar)}`}>{draft.pillar}</Pill>
+            {draft.verifyDate && <Pill tone="verify">VERIFY DATE</Pill>}
+            <h2>{draft.title}</h2>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+              <span>
+                {draft.date} · {draft.time}
+              </span>
+              {saveState === 'dirty' && (
+                <small style={{ color: 'var(--grey)', fontSize: '0.7rem' }}>Unsaved…</small>
+              )}
+              {saveState === 'saving' && (
+                <small style={{ color: 'var(--grey)', fontSize: '0.7rem' }}>Saving…</small>
+              )}
+              {saveState === 'saved' && (
+                <small style={{ color: '#22c55e', fontSize: '0.7rem', fontWeight: 600 }}>Saved</small>
+              )}
+              {saveState === 'error' && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: '#ef4444', fontSize: '0.7rem', fontWeight: 600 }}>
+                  Save failed{errorMsg ? `: ${errorMsg}` : ''}
+                  <button
+                    type="button"
+                    onClick={retry}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid #ef4444',
+                      color: '#ef4444',
+                      padding: '0.1rem 0.4rem',
+                      fontSize: '0.65rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Retry
+                  </button>
+                </span>
+              )}
             </span>
           </div>
-          <button className="close" onClick={onClose} aria-label="Close detail">
+          <button className="close" onClick={requestClose} aria-label="Close detail">
             ×
           </button>
         </header>
@@ -148,7 +226,7 @@ export function DetailDrawer({
           {onDelete && canWrite && (
             <Button
               onClick={() => {
-                if (window.confirm(`Delete "${item.title || 'Untitled item'}"?`)) {
+                if (window.confirm(`Delete "${draft.title || 'Untitled item'}"?`)) {
                   onDelete();
                 }
               }}
@@ -177,23 +255,24 @@ export function DetailDrawer({
               <div className="form-grid">
                 <Field label="TITLE" required className="span-2">
                   <Input
-                    value={item.title}
-                    onChange={(e) => onUpdate({ title: e.target.value })}
+                    value={draft.title}
+                    onChange={(e) => queuePatch({ title: e.target.value })}
+                    onBlur={flushIfDirty}
                   />
                 </Field>
                 <Field label="CONTENT TYPE" required>
                   <Select
-                    value={item.type}
+                    value={draft.type}
                     onChange={(e) => {
                       const newType = e.target.value as ContentType;
-                      const prevStandards = getChecklistForType(item.type);
+                      const prevStandards = getChecklistForType(draft.type);
                       const isDefaultOrEmpty =
-                        item.checklist.length === 0 ||
-                        item.checklist.every(
+                        draft.checklist.length === 0 ||
+                        draft.checklist.every(
                           (c, idx) => !c.done && c.label === prevStandards[idx]
                         );
 
-                      onUpdate({
+                      void commitImmediate({
                         type: newType,
                         specs: specMap[newType] || [],
                         ...(isDefaultOrEmpty
@@ -214,8 +293,8 @@ export function DetailDrawer({
                 </Field>
                 <Field label="PILLAR" required>
                   <Select
-                    value={item.pillar}
-                    onChange={(e) => onUpdate({ pillar: e.target.value as Pillar })}
+                    value={draft.pillar}
+                    onChange={(e) => void commitImmediate({ pillar: e.target.value as Pillar })}
                   >
                     {pillars.map((x) => (
                       <option key={x}>{x}</option>
@@ -225,27 +304,29 @@ export function DetailDrawer({
                 <Field label="POST DATE" required>
                   <Input
                     type="date"
-                    value={item.date}
-                    onChange={(e) => onUpdate({ date: e.target.value })}
+                    value={draft.date}
+                    onChange={(e) => queuePatch({ date: e.target.value })}
+                    onBlur={flushIfDirty}
                   />
                 </Field>
                 <Field label="TIME">
                   <Input
                     type="time"
-                    value={item.time}
-                    onChange={(e) => onUpdate({ time: e.target.value })}
+                    value={draft.time}
+                    onChange={(e) => queuePatch({ time: e.target.value })}
+                    onBlur={flushIfDirty}
                   />
                 </Field>
                 <Field label="ASSIGNEE" required>
                   <Select
-                    value={item.assigneeId || teamMembers?.find((m) => m.full_name === item.assignee)?.id || ''}
+                    value={draft.assigneeId || teamMembers?.find((m) => m.full_name === draft.assignee)?.id || ''}
                     onChange={(e) => {
                       const selectedId = e.target.value;
                       if (!selectedId) {
-                        onUpdate({ assignee: '', assigneeId: null });
+                        void commitImmediate({ assignee: '', assigneeId: null });
                       } else {
                         const member = teamMembers?.find((m) => m.id === selectedId);
-                        onUpdate({
+                        void commitImmediate({
                           assignee: member?.full_name || '',
                           assigneeId: selectedId,
                         });
@@ -263,17 +344,17 @@ export function DetailDrawer({
                       <option value="" disabled>No users available</option>
                     )}
                   </Select>
-                  {item.assignee && (
+                  {draft.assignee && (
                     <div className="assignee-role-badge">
                       <span className="eyebrow">ROLE:</span>
-                      <strong>{getUserDesignation(item.assignee)}</strong>
+                      <strong>{getUserDesignation(draft.assignee)}</strong>
                     </div>
                   )}
                 </Field>
                 <Field label="STATUS">
                   <Select
-                    value={item.status}
-                    onChange={(e) => onUpdate({ status: e.target.value as any })}
+                    value={draft.status}
+                    onChange={(e) => void commitImmediate({ status: e.target.value as any })}
                   >
                     {statuses.map((x) => (
                       <option key={x}>{x}</option>
@@ -282,8 +363,8 @@ export function DetailDrawer({
                 </Field>
                 <Field label="GOAL">
                   <Select
-                    value={item.goal}
-                    onChange={(e) => onUpdate({ goal: e.target.value })}
+                    value={draft.goal}
+                    onChange={(e) => void commitImmediate({ goal: e.target.value })}
                   >
                     {['Get Clients', 'Build Trust', 'Festive', 'Product/Merch'].map((x) => (
                       <option key={x}>{x}</option>
@@ -292,8 +373,8 @@ export function DetailDrawer({
                 </Field>
                 <Field label="PRIORITY">
                   <Select
-                    value={item.priority}
-                    onChange={(e) => onUpdate({ priority: e.target.value })}
+                    value={draft.priority}
+                    onChange={(e) => void commitImmediate({ priority: e.target.value })}
                   >
                     {['Low', 'Normal', 'High'].map((x) => (
                       <option key={x}>{x}</option>
@@ -303,20 +384,26 @@ export function DetailDrawer({
                 <Field label="BRIEF" required className="span-2">
                   <Textarea
                     rows={5}
-                    value={item.brief}
+                    value={draft.brief}
                     placeholder="State the objective, sequence and outcome."
-                    onChange={(e) => onUpdate({ brief: e.target.value })}
+                    onChange={(e) => queuePatch({ brief: e.target.value })}
+                    onBlur={flushIfDirty}
                   />
                 </Field>
               </div>
 
-              <DetailReferences item={item} onUpdate={onUpdate} />
+              <DetailReferences
+                item={draft}
+                onQueuePatch={queuePatch}
+                onCommitImmediate={commitImmediate}
+                onBlurFlush={flushIfDirty}
+              />
 
               <div className="spec-block">
                 <span className="eyebrow">AUTO-ATTACHED SPECS</span>
-                <h3>{item.type.toUpperCase()}</h3>
+                <h3>{draft.type.toUpperCase()}</h3>
                 <div>
-                  {item.specs.map((x) => (
+                  {draft.specs.map((x) => (
                     <Pill key={x}>{x}</Pill>
                   ))}
                 </div>
@@ -368,6 +455,7 @@ export function DetailDrawer({
                           value={slideText}
                           placeholder={`Enter on-screen text for slide ${idx + 1}...`}
                           onChange={(e) => handleSlideChange(idx, e.target.value)}
+                          onBlur={flushIfDirty}
                         />
                       </div>
                     ))}
@@ -377,34 +465,42 @@ export function DetailDrawer({
                 <Field label="ON-SCREEN TEXT — ONE SCENE PER LINE" required>
                   <Textarea
                     rows={6}
-                    value={item.copy.onScreen}
-                    onChange={(e) => onCopy('onScreen', e.target.value)}
+                    value={draft.copy.onScreen}
+                    onChange={(e) => queuePatch({ copy: { onScreen: e.target.value } })}
+                    onBlur={flushIfDirty}
                   />
                 </Field>
               )}
               <Field label="CAPTION" required>
                 <Textarea
                   rows={6}
-                  value={item.copy.caption}
-                  onChange={(e) => onCopy('caption', e.target.value)}
+                  value={draft.copy.caption}
+                  onChange={(e) => queuePatch({ copy: { caption: e.target.value } })}
+                  onBlur={flushIfDirty}
                 />
               </Field>
               <Field label="HASHTAGS — MAX 5">
                 <Input
-                  value={item.copy.hashtags}
+                  value={draft.copy.hashtags}
                   onChange={(e) =>
-                    onCopy('hashtags', e.target.value.split(' ').slice(0, 5).join(' '))
+                    queuePatch({ copy: { hashtags: e.target.value.split(' ').slice(0, 5).join(' ') } })
                   }
+                  onBlur={flushIfDirty}
                 />
               </Field>
               <Field label="CALL TO ACTION" required>
-                <Input value={item.copy.cta} onChange={(e) => onCopy('cta', e.target.value)} />
+                <Input
+                  value={draft.copy.cta}
+                  onChange={(e) => queuePatch({ copy: { cta: e.target.value } })}
+                  onBlur={flushIfDirty}
+                />
               </Field>
               <Field label="VOICEOVER OR SCRIPT">
                 <Textarea
                   rows={8}
-                  value={item.copy.script}
-                  onChange={(e) => onCopy('script', e.target.value)}
+                  value={draft.copy.script}
+                  onChange={(e) => queuePatch({ copy: { script: e.target.value } })}
+                  onBlur={flushIfDirty}
                 />
               </Field>
             </div>
@@ -418,14 +514,14 @@ export function DetailDrawer({
                   <h3>{isCarousel ? 'SLIDE LIST (MAX 5)' : 'SHOT / SLIDE LIST'}</h3>
                 </div>
                 <Button
-                  disabled={isCarousel && item.shots.length >= 5}
+                  disabled={isCarousel && draft.shots.length >= 5}
                   onClick={() => {
-                    if (isCarousel && item.shots.length >= 5) return;
-                    onUpdate({
+                    if (isCarousel && draft.shots.length >= 5) return;
+                    void commitImmediate({
                       shots: [
-                        ...item.shots,
+                        ...draft.shots,
                         {
-                          order: String(item.shots.length + 1).padStart(2, '0'),
+                          order: String(draft.shots.length + 1).padStart(2, '0'),
                           visual: '',
                           text: '',
                         },
@@ -433,38 +529,41 @@ export function DetailDrawer({
                     });
                   }}
                 >
-                  {isCarousel && item.shots.length >= 5 ? 'MAX 5 REACHED' : '+ ADD ROW'}
+                  {isCarousel && draft.shots.length >= 5 ? 'MAX 5 REACHED' : '+ ADD ROW'}
                 </Button>
               </div>
-              {item.shots.map((s, index) => (
-                <div className="shot-row" key={index}>
+              {draft.shots.map((s, index) => (
+                <div className="shot-row" key={s.id || index}>
                   <Input
                     value={s.order}
                     onChange={(e) => {
-                      const n = [...item.shots];
+                      const n = [...draft.shots];
                       n[index] = { ...s, order: e.target.value };
-                      onUpdate({ shots: n });
+                      queuePatch({ shots: n });
                     }}
+                    onBlur={flushIfDirty}
                   />
                   <Textarea
                     rows={2}
                     placeholder="Visual description"
                     value={s.visual}
                     onChange={(e) => {
-                      const n = [...item.shots];
+                      const n = [...draft.shots];
                       n[index] = { ...s, visual: e.target.value };
-                      onUpdate({ shots: n });
+                      queuePatch({ shots: n });
                     }}
+                    onBlur={flushIfDirty}
                   />
                   <Textarea
                     rows={2}
                     placeholder="Text on screen"
                     value={s.text}
                     onChange={(e) => {
-                      const n = [...item.shots];
+                      const n = [...draft.shots];
                       n[index] = { ...s, text: e.target.value };
-                      onUpdate({ shots: n });
+                      queuePatch({ shots: n });
                     }}
+                    onBlur={flushIfDirty}
                   />
                 </div>
               ))}
@@ -473,8 +572,8 @@ export function DetailDrawer({
 
           {tab === 'assets' && (
             <AssetUploadManager
-              itemId={item.id}
-              assets={item.assets || []}
+              itemId={draft.id}
+              assets={draft.assets || []}
               onUpload={onUploadAsset || (async () => {})}
               onDelete={onDeleteAsset || (async () => {})}
               canWrite={canWrite}
@@ -487,27 +586,27 @@ export function DetailDrawer({
               <div className="review-checklist-section">
                 <div className="review-checklist-header">
                   <div>
-                    <span className="eyebrow">{item.type.toUpperCase()} VERIFICATION</span>
+                    <span className="eyebrow">{draft.type.toUpperCase()} VERIFICATION</span>
                     <h3>QUALITY & ALGORITHM CHECKLIST</h3>
                   </div>
                   <div className="review-checklist-actions">
                     <span className="review-checklist-count">
-                      {item.checklist.filter((c) => c.done).length} / {item.checklist.length} PASSED
+                      {draft.checklist.filter((c) => c.done).length} / {draft.checklist.length} PASSED
                     </span>
                     <Button
                       type="button"
                       onClick={() => {
-                        onUpdate({
-                          checklist: getChecklistForType(item.type).map((label) => ({
+                        void commitImmediate({
+                          checklist: getChecklistForType(draft.type).map((label) => ({
                             label,
                             done: false,
                           })),
                         });
-                        setToast(`Loaded standard ${item.type} checklist.`);
+                        setToast(`Loaded standard ${draft.type} checklist.`);
                       }}
-                      title={`Reset to recommended criteria for ${item.type}`}
+                      title={`Reset to recommended criteria for ${draft.type}`}
                     >
-                      SYNC {item.type.toUpperCase()} STANDARD
+                      SYNC {draft.type.toUpperCase()} STANDARD
                     </Button>
                   </div>
                 </div>
@@ -517,8 +616,8 @@ export function DetailDrawer({
                     className="review-progress-fill"
                     style={{
                       width: `${
-                        item.checklist.length
-                          ? (item.checklist.filter((c) => c.done).length / item.checklist.length) * 100
+                        draft.checklist.length
+                          ? (draft.checklist.filter((c) => c.done).length / draft.checklist.length) * 100
                           : 0
                       }%`,
                     }}
@@ -526,15 +625,15 @@ export function DetailDrawer({
                 </div>
 
                 <div className="checklist">
-                  {item.checklist.map((c, index) => (
+                  {draft.checklist.map((c, index) => (
                     <label key={c.label + index} className={c.done ? 'checked' : ''}>
                       <input
                         type="checkbox"
                         checked={c.done}
                         onChange={() => {
-                          const n = [...item.checklist];
+                          const n = [...draft.checklist];
                           n[index] = { ...c, done: !c.done };
-                          onUpdate({ checklist: n });
+                          void commitImmediate({ checklist: n });
                         }}
                       />
                       <span>{c.label}</span>
@@ -545,8 +644,8 @@ export function DetailDrawer({
 
               <div className="comments">
                 <span className="eyebrow">REVIEW THREAD</span>
-                {item.comments.map((c, idx) => (
-                  <div key={idx}>
+                {draft.comments.map((c, idx) => (
+                  <div key={c.id || idx}>
                     <span className="avatar">
                       {c.author
                         .split(' ')
@@ -576,7 +675,7 @@ export function DetailDrawer({
               <div className="approval">
                 <Button
                   onClick={() => {
-                    onUpdate({ status: 'In Design/Edit' });
+                    void commitImmediate({ status: 'In Design/Edit' });
                     setToast('Changes requested.');
                   }}
                 >
@@ -585,7 +684,7 @@ export function DetailDrawer({
                 <Button
                   variant="primary"
                   onClick={() => {
-                    onUpdate({ status: 'Approved' });
+                    void commitImmediate({ status: 'Approved' });
                     setToast('Item approved.');
                   }}
                 >
@@ -600,7 +699,22 @@ export function DetailDrawer({
   );
 }
 
-function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Partial<Item>) => void }) {
+function DeferredReferencePreview({ url, label }: { url: string; label: string }) {
+  const deferredUrl = useDeferredValue(url);
+  return <ReferenceEmbedPreview url={deferredUrl} label={label} />;
+}
+
+function DetailReferences({
+  item,
+  onQueuePatch,
+  onCommitImmediate,
+  onBlurFlush,
+}: {
+  item: Item;
+  onQueuePatch: (patch: DraftPatch<Item>) => void;
+  onCommitImmediate: (patch: DraftPatch<Item>) => Promise<void>;
+  onBlurFlush: () => void;
+}) {
   const [collapsedIndices, setCollapsedIndices] = useState<Record<number, boolean>>({});
 
   const toggleCollapse = (idx: number) => {
@@ -608,7 +722,7 @@ function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Pa
   };
 
   const add = () => {
-    onUpdate({
+    void onCommitImmediate({
       references: [
         ...item.references,
         { url: '', label: '', instruction: '', type: 'Inspiration' },
@@ -618,7 +732,7 @@ function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Pa
 
   const remove = (index: number) => {
     const next = item.references.filter((_, idx) => idx !== index);
-    onUpdate({ references: next });
+    void onCommitImmediate({ references: next });
   };
 
   return (
@@ -684,7 +798,7 @@ function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Pa
                           onChange={(e) => {
                             const n = [...item.references];
                             n[index] = { ...r, type: e.target.value };
-                            onUpdate({ references: n });
+                            void onCommitImmediate({ references: n });
                           }}
                         >
                           {[
@@ -707,8 +821,9 @@ function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Pa
                           onChange={(e) => {
                             const n = [...item.references];
                             n[index] = { ...r, label: e.target.value };
-                            onUpdate({ references: n });
+                            onQueuePatch({ references: n });
                           }}
+                          onBlur={onBlurFlush}
                         />
                       </Field>
                       <Field label="REFERENCE LINK (URL)" className="span-2">
@@ -718,8 +833,9 @@ function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Pa
                           onChange={(e) => {
                             const n = [...item.references];
                             n[index] = { ...r, url: e.target.value };
-                            onUpdate({ references: n });
+                            onQueuePatch({ references: n });
                           }}
+                          onBlur={onBlurFlush}
                         />
                       </Field>
                       <Field label="EDITOR INSTRUCTION / NOTES" className="span-2">
@@ -729,8 +845,9 @@ function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Pa
                           onChange={(e) => {
                             const n = [...item.references];
                             n[index] = { ...r, instruction: e.target.value };
-                            onUpdate({ references: n });
+                            onQueuePatch({ references: n });
                           }}
+                          onBlur={onBlurFlush}
                         />
                       </Field>
                     </div>
@@ -739,7 +856,7 @@ function DetailReferences({ item, onUpdate }: { item: Item; onUpdate: (patch: Pa
                       <span className="eyebrow" style={{ marginBottom: '0.4rem', display: 'block' }}>
                         LIVE EMBED PREVIEW
                       </span>
-                      <ReferenceEmbedPreview
+                      <DeferredReferencePreview
                         url={r.url}
                         label={r.label || `Reference ${index + 1}`}
                       />

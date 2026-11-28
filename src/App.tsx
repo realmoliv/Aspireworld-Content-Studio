@@ -1,7 +1,7 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { useContentStudio, getLeadMetaCache } from '@/hooks/useContentStudio';
+import { useContentStudio, getLeadMetaCache, type ItemPatch } from '@/hooks/useContentStudio';
 import { useTheme } from '@/hooks/useTheme';
 import { AuthView } from '@/components/AuthView';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -100,24 +100,23 @@ function ContentStudioApp() {
     Offer: 2,
     Festive: 2,
   });
-  const [search, setSearch] = useState('');
 
   const isConnected = isSupabaseConfigured && Boolean(user) && !studio.dbTablesMissing;
   const items = isConnected && studio.isLoaded ? studio.items : localItems;
   const leads = isConnected && studio.isLoaded && !studio.dbTablesMissing ? studio.leads : localLeads;
 
-  // Keep local leads in sync when cloud leads are loaded
   useEffect(() => {
-    if (isConnected && studio.isLoaded && studio.leads.length > 0) {
-      setLocalLeads(studio.leads);
+    if (isConnected) return;
+    try {
+      localStorage.setItem('aspire-leads', JSON.stringify(localLeads));
+    } catch {
+      // Ignored
     }
-  }, [isConnected, studio.isLoaded, studio.leads]);
+  }, [localLeads, isConnected]);
 
-  // Sync selectedId with route parameter if present
+  // Sync selectedId with route parameter (and clear when navigating away from /items/:id)
   useEffect(() => {
-    if (routeItemId) {
-      setSelectedId(routeItemId);
-    }
+    setSelectedId(routeItemId);
   }, [routeItemId]);
 
   useEffect(() => {
@@ -150,19 +149,28 @@ function ContentStudioApp() {
     ['Approved', 'Scheduled', 'Posted'].includes(i.status)
   ).length;
 
-  const updateItem = (id: string, patch: Partial<Item>) => {
-    setLocalItems((v) => v.map((i) => (i.id === id ? { ...i, ...patch } : i)));
-    if (isConnected) {
-      studio.updateItem(id, patch);
-    }
-  };
+  const updateItem = useCallback(
+    async (id: string, patch: ItemPatch) => {
+      if (isConnected) {
+        return studio.updateItem(id, patch);
+      }
+      setLocalItems((v) =>
+        v.map((i) => {
+          if (i.id !== id) return i;
+          const nextCopy = patch.copy ? { ...i.copy, ...patch.copy } : i.copy;
+          return { ...i, ...patch, copy: nextCopy };
+        })
+      );
+    },
+    [isConnected, studio.updateItem]
+  );
 
-  const updateCopy = (id: string, key: keyof Item['copy'], value: string) => {
-    setLocalItems((v) => v.map((i) => (i.id === id ? { ...i, copy: { ...i.copy, [key]: value } } : i)));
-    if (isConnected) {
-      studio.updateCopy(id, key, value);
-    }
-  };
+  const updateCopy = useCallback(
+    async (id: string, key: keyof Item['copy'], value: string) => {
+      return updateItem(id, { copy: { [key]: value } });
+    },
+    [updateItem]
+  );
 
   const deleteItem = async (id: string) => {
     setLocalItems((v) => v.filter((i) => i.id !== id));
@@ -255,17 +263,63 @@ function ContentStudioApp() {
     setToast('Month plan generated.');
   };
 
-  const handleOpenItem = (id: string) => {
-    setSelectedId(id);
-    navigate(`/items/${id}`);
-  };
+  const handleOpenItem = useCallback(
+    (id: string) => {
+      setSelectedId(id);
+      navigate(`/items/${id}`);
+    },
+    [navigate]
+  );
 
-  const handleCloseDrawer = () => {
+  const handleCloseDrawer = useCallback(() => {
     setSelectedId(null);
     if (location.pathname.startsWith('/items/')) {
       navigate('/calendar');
     }
-  };
+  }, [location.pathname, navigate]);
+
+  const handleMoveItem = useCallback((id: string, date: string) => {
+    void updateItem(id, { date });
+  }, [updateItem]);
+
+  const handleStatusItem = useCallback((id: string, status: Item['status']) => {
+    void updateItem(id, { status });
+  }, [updateItem]);
+
+  const handleUpdateLead = useCallback(
+    async (leadId: string, patch: Partial<Lead>) => {
+      if (isConnected) {
+        await studio.updateLead(leadId, patch);
+      } else {
+        setLocalLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
+      }
+    },
+    [isConnected, studio.updateLead]
+  );
+
+  const handleDeleteLead = useCallback(
+    (leadId: string) => {
+      if (isConnected) {
+        void studio.deleteLead(leadId);
+      } else {
+        setLocalLeads((prev) => prev.filter((l) => l.id !== leadId));
+      }
+      setToast('Lead removed.');
+    },
+    [isConnected, studio.deleteLead]
+  );
+
+  const handleUseReference = useCallback(
+    (ref: ReferenceItem) => {
+      const target = items[0];
+      if (target) {
+        void updateItem(target.id, { references: [...target.references, ref] });
+        handleOpenItem(target.id);
+        setToast('Reference added to item.');
+      }
+    },
+    [items, updateItem, handleOpenItem]
+  );
 
   const activeId = routeItemId || selectedId;
   const selected = items.find((i) => i.id === activeId) || null;
@@ -391,7 +445,7 @@ function ContentStudioApp() {
               setFiltersOpen={setFiltersOpen}
               ready={ready}
               onOpen={handleOpenItem}
-              onMove={(id, date) => updateItem(id, { date })}
+              onMove={handleMoveItem}
               onNew={() => openNew()}
               teamMembers={studio.teamMembers}
             />
@@ -410,7 +464,7 @@ function ContentStudioApp() {
               setFiltersOpen={setFiltersOpen}
               ready={ready}
               onOpen={handleOpenItem}
-              onMove={(id, date) => updateItem(id, { date })}
+              onMove={handleMoveItem}
               onNew={() => openNew()}
               teamMembers={studio.teamMembers}
             />
@@ -422,7 +476,7 @@ function ContentStudioApp() {
             <BoardView
               items={items.filter((i) => i.date.startsWith(month))}
               onOpen={handleOpenItem}
-              onStatus={(id, status) => updateItem(id, { status })}
+              onStatus={handleStatusItem}
             />
           }
         />
@@ -430,16 +484,7 @@ function ContentStudioApp() {
           path="/references"
           element={
             <ReferenceView
-              search={search}
-              setSearch={setSearch}
-              onUse={(ref: ReferenceItem) => {
-                const target = items[0];
-                if (target) {
-                  updateItem(target.id, { references: [...target.references, ref] });
-                  handleOpenItem(target.id);
-                  setToast('Reference added to item.');
-                }
-              }}
+              onUse={handleUseReference}
             />
           }
         />
@@ -510,19 +555,8 @@ function ContentStudioApp() {
                   setToast('Lead added.');
                 }
               }}
-              onUpdateLead={async (leadId, patch) => {
-                setLocalLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, ...patch } : l)));
-                if (isConnected) {
-                  await studio.updateLead(leadId, patch);
-                }
-              }}
-              onDeleteLead={(leadId) => {
-                setLocalLeads((prev) => prev.filter((l) => l.id !== leadId));
-                if (isConnected) {
-                  studio.deleteLead(leadId);
-                }
-                setToast('Lead removed.');
-              }}
+              onUpdateLead={handleUpdateLead}
+              onDeleteLead={handleDeleteLead}
             />
           }
         />
@@ -536,6 +570,7 @@ function ContentStudioApp() {
           teamMembers={studio.teamMembers}
           onClose={handleCloseDrawer}
           onUpdate={(patch) => updateItem(selected.id, patch)}
+          onUpdateItem={updateItem}
           onCopy={(key, value) => updateCopy(selected.id, key, value)}
           onDuplicate={() => duplicate(selected)}
           onDuplicateNext={() => duplicate(selected, true)}

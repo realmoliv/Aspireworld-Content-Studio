@@ -1,3 +1,4 @@
+import React from 'react';
 import type { Item, Status } from '@/types';
 import { SectionTitle, Pill } from '@/components/ui';
 import { statuses, slug, missing } from '@/constants';
@@ -8,7 +9,7 @@ interface BoardViewProps {
   onStatus: (id: string, status: Status) => void;
 }
 
-export function BoardView({ items, onOpen, onStatus }: BoardViewProps) {
+export const BoardView = React.memo(function BoardView({ items, onOpen, onStatus }: BoardViewProps) {
   return (
     <>
       <SectionTitle
@@ -57,4 +58,4 @@ export function BoardView({ items, onOpen, onStatus }: BoardViewProps) {
       </div>
     </>
   );
-}
+});
